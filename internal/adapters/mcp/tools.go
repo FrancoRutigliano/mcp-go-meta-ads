@@ -86,6 +86,11 @@ func parseOptionalRange(since, until string) (*domain.DateRange, bool) {
 func campaignsTool() mcp.Tool {
 	return mcp.NewTool("get_campaigns",
 		mcp.WithDescription("Lista las campañas de la cuenta publicitaria de Meta. Por defecto sólo las activas."),
+		// Es de solo lectura: no modifica nada (Constitución, solo lectura).
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("status",
 			mcp.Description("Filtro de estado: 'active' (sólo activas, por defecto) o 'all' (todas)."),
 			mcp.Enum("active", "all"),
@@ -100,6 +105,11 @@ func campaignsTool() mcp.Tool {
 func insightsTool() mcp.Tool {
 	return mcp.NewTool("get_campaigns_insights",
 		mcp.WithDescription("Devuelve el rendimiento (gasto, impresiones, clics, alcance, CTR, CPC) de las campañas para un período. Si no se indica período, usa los últimos 30 días."),
+		// Es de solo lectura: no modifica nada (Constitución, solo lectura).
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("campaign_id",
 			mcp.Description("ID de una campaña específica. Si se omite, devuelve todas las campañas de la cuenta."),
 		),
