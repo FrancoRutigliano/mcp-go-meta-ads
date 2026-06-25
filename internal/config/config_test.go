@@ -116,6 +116,65 @@ func TestLoad_TrimsWhitespace(t *testing.T) {
 	}
 }
 
+func TestLoad_ThresholdsAndSufficiencyDefaults(t *testing.T) {
+	getenv := envMap(map[string]string{
+		"META_TOKEN":         "secret-token",
+		"META_AD_ACCOUNT_ID": "act_1",
+	})
+
+	cfg, err := Load(getenv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Thresholds.MinROAS != 2.0 || cfg.Thresholds.AvgTicket != 80000 {
+		t.Errorf("threshold defaults inesperados: %+v", cfg.Thresholds)
+	}
+	if cfg.Sufficiency.MinPurchases != 1 || cfg.Sufficiency.MinDays != 7 {
+		t.Errorf("sufficiency defaults inesperados: %+v", cfg.Sufficiency)
+	}
+}
+
+func TestLoad_ThresholdOverrides(t *testing.T) {
+	getenv := envMap(map[string]string{
+		"META_TOKEN":         "secret-token",
+		"META_AD_ACCOUNT_ID": "act_1",
+		"ROAS_MIN":           "3",
+		"AVG_TICKET":         "95000.5",
+		"FREQUENCY_MAX":      "4",
+		"MIN_DAYS":           "14",
+	})
+
+	cfg, err := Load(getenv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Thresholds.MinROAS != 3 {
+		t.Errorf("MinROAS = %v, want 3", cfg.Thresholds.MinROAS)
+	}
+	if cfg.Thresholds.AvgTicket != 95000.5 {
+		t.Errorf("AvgTicket = %v, want 95000.5", cfg.Thresholds.AvgTicket)
+	}
+	if cfg.Thresholds.MaxFrequency != 4 {
+		t.Errorf("MaxFrequency = %v, want 4", cfg.Thresholds.MaxFrequency)
+	}
+	if cfg.Sufficiency.MinDays != 14 {
+		t.Errorf("MinDays = %v, want 14", cfg.Sufficiency.MinDays)
+	}
+}
+
+func TestLoad_InvalidNumericThresholdFailsFast(t *testing.T) {
+	getenv := envMap(map[string]string{
+		"META_TOKEN":         "secret-token",
+		"META_AD_ACCOUNT_ID": "act_1",
+		"ROAS_MIN":           "no-es-un-numero",
+	})
+
+	_, err := Load(getenv)
+	if err == nil {
+		t.Fatal("expected error for invalid ROAS_MIN")
+	}
+}
+
 // Constitución, Principio I: el token NUNCA debe aparecer en logs ni en
 // representaciones de la config.
 func TestConfig_StringRedactsToken(t *testing.T) {
