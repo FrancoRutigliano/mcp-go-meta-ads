@@ -14,9 +14,11 @@ import (
 type fakeReader struct {
 	campaigns    []domain.Campaign
 	insights     []domain.Insight
+	breakdown    domain.AudienceBreakdown
 	err          error
 	gotCampaignQ domain.CampaignQuery
 	gotInsightQ  domain.InsightQuery
+	gotAudienceQ domain.AudienceQuery
 	called       bool
 }
 
@@ -31,6 +33,16 @@ func (f *fakeReader) GetInsights(_ context.Context, q domain.InsightQuery) ([]do
 	f.gotInsightQ = q
 	return f.insights, f.err
 }
+
+func (f *fakeReader) GetAudienceBreakdown(_ context.Context, q domain.AudienceQuery) (domain.AudienceBreakdown, error) {
+	f.called = true
+	f.gotAudienceQ = q
+	return f.breakdown, f.err
+}
+
+// helpers de umbrales/suficiencia por defecto para construir casos de uso.
+func defThresholds() domain.Thresholds         { return domain.DefaultThresholds() }
+func defSufficiency() domain.SufficiencyPolicy { return domain.DefaultSufficiency() }
 
 func fixedClock(t time.Time) func() time.Time {
 	return func() time.Time { return t }
@@ -78,7 +90,7 @@ func TestListCampaigns_PropagatesError(t *testing.T) {
 func TestGetInsights_AppliesDefault30DayRange(t *testing.T) {
 	now := time.Date(2026, 6, 23, 15, 0, 0, 0, time.UTC)
 	fake := &fakeReader{}
-	uc := NewGetInsightsWithClock(fake, fixedClock(now))
+	uc := NewGetInsightsWithClock(fake, defThresholds(), defSufficiency(), fixedClock(now))
 
 	_, applied, err := uc.Execute(context.Background(), "", nil)
 	if err != nil {
@@ -99,7 +111,7 @@ func TestGetInsights_AppliesDefault30DayRange(t *testing.T) {
 
 func TestGetInsights_RejectsInvalidRangeWithoutCallingReader(t *testing.T) {
 	fake := &fakeReader{}
-	uc := NewGetInsights(fake)
+	uc := NewGetInsights(fake, defThresholds(), defSufficiency())
 
 	bad := &domain.DateRange{
 		Since: time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
@@ -117,7 +129,7 @@ func TestGetInsights_RejectsInvalidRangeWithoutCallingReader(t *testing.T) {
 
 func TestGetInsights_PassesThroughCampaignAndRange(t *testing.T) {
 	fake := &fakeReader{}
-	uc := NewGetInsights(fake)
+	uc := NewGetInsights(fake, defThresholds(), defSufficiency())
 
 	rng := &domain.DateRange{
 		Since: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
