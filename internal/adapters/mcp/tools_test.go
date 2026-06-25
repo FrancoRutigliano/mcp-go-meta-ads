@@ -15,6 +15,7 @@ import (
 type fakeReader struct {
 	campaigns []domain.Campaign
 	insights  []domain.Insight
+	breakdown domain.AudienceBreakdown
 	err       error
 }
 
@@ -24,6 +25,12 @@ func (f *fakeReader) ListCampaigns(context.Context, domain.CampaignQuery) ([]dom
 func (f *fakeReader) GetInsights(context.Context, domain.InsightQuery) ([]domain.Insight, error) {
 	return f.insights, f.err
 }
+func (f *fakeReader) GetAudienceBreakdown(context.Context, domain.AudienceQuery) (domain.AudienceBreakdown, error) {
+	return f.breakdown, f.err
+}
+
+func th() domain.Thresholds        { return domain.DefaultThresholds() }
+func su() domain.SufficiencyPolicy { return domain.DefaultSufficiency() }
 
 func newRequest(args map[string]any) mcp.CallToolRequest {
 	var req mcp.CallToolRequest
@@ -83,7 +90,7 @@ func TestInsightsHandler_DefaultPeriod(t *testing.T) {
 	fake := &fakeReader{insights: []domain.Insight{
 		{CampaignID: "1", CampaignName: "Ventas Q2", Metrics: domain.Metrics{Spend: 1000}},
 	}}
-	h := insightsHandler(app.NewGetInsights(fake))
+	h := insightsHandler(app.NewGetInsights(fake, th(), su()))
 
 	res, err := h(context.Background(), newRequest(nil))
 	if err != nil {
@@ -99,7 +106,7 @@ func TestInsightsHandler_DefaultPeriod(t *testing.T) {
 
 func TestInsightsHandler_IncompleteRangeRejected(t *testing.T) {
 	fake := &fakeReader{}
-	h := insightsHandler(app.NewGetInsights(fake))
+	h := insightsHandler(app.NewGetInsights(fake, th(), su()))
 
 	// Sólo 'since' sin 'until' → debe rechazar con mensaje claro, sin llamar a Meta.
 	res, err := h(context.Background(), newRequest(map[string]any{"since": "2026-05-01"}))
@@ -114,9 +121,42 @@ func TestInsightsHandler_IncompleteRangeRejected(t *testing.T) {
 	}
 }
 
+func TestAudienceHandler_Success(t *testing.T) {
+	v := 4.0
+	fake := &fakeReader{breakdown: domain.AudienceBreakdown{
+		Dimension: domain.DimensionAge,
+		Segments: []domain.AudienceSegment{
+			{Label: "25-34", Metrics: domain.Metrics{Spend: 1000, ROAS: &v}},
+		},
+	}}
+	h := audienceHandler(app.NewGetAudienceBreakdown(fake, th(), su()))
+
+	res, err := h(context.Background(), newRequest(map[string]any{"dimension": "age"}))
+	if err != nil {
+		t.Fatalf("handler returned go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected success, got: %q", resultText(res))
+	}
+	out := resultText(res)
+	if !strings.Contains(out, "edad") || !strings.Contains(out, "25-34") {
+		t.Errorf("breakdown output inesperado: %q", out)
+	}
+}
+
+func TestAudienceHandler_InvalidDimension(t *testing.T) {
+	fake := &fakeReader{}
+	h := audienceHandler(app.NewGetAudienceBreakdown(fake, th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{"dimension": "country"}))
+	if !res.IsError {
+		t.Fatal("expected error result for invalid dimension")
+	}
+}
+
 func TestInsightsHandler_MalformedDateRejected(t *testing.T) {
 	fake := &fakeReader{}
-	h := insightsHandler(app.NewGetInsights(fake))
+	h := insightsHandler(app.NewGetInsights(fake, th(), su()))
 
 	res, _ := h(context.Background(), newRequest(map[string]any{"since": "ayer", "until": "hoy"}))
 	if !res.IsError {

@@ -8,8 +8,8 @@ import (
 	"github.com/mashats/meta-ads-manager/internal/app"
 )
 
-// NewServer construye el servidor MCP con las dos tools de lectura registradas.
-func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights) *server.MCPServer {
+// NewServer construye el servidor MCP con las tools de lectura registradas.
+func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights, gab *app.GetAudienceBreakdown) *server.MCPServer {
 	s := server.NewMCPServer(
 		name,
 		version,
@@ -19,6 +19,7 @@ func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights)
 
 	s.AddTool(campaignsTool(), campaignsHandler(lc))
 	s.AddTool(insightsTool(), insightsHandler(gi))
+	s.AddTool(audienceTool(), audienceHandler(gab))
 
 	return s
 }

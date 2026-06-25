@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mashats/meta-ads-manager/internal/app"
 	"github.com/mashats/meta-ads-manager/internal/domain"
 )
 
@@ -44,25 +45,140 @@ func formatCampaigns(campaigns []domain.Campaign, truncated bool) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// formatInsights arma un resumen legible del rendimiento, indicando el período
-// aplicado de forma explícita (FR-004).
-func formatInsights(insights []domain.Insight, applied domain.DateRange) string {
-	period := fmt.Sprintf("del %s al %s",
-		applied.Since.Format("02/01/2006"), applied.Until.Format("02/01/2006"))
-
-	if len(insights) == 0 {
+// formatInsights arma un resumen legible del rendimiento evaluado, indicando el
+// período aplicado (FR-004) y el estado de cada métrica vs umbral (Principio VIII).
+func formatInsights(reports []app.CampaignInsight, applied domain.DateRange) string {
+	period := periodES(applied)
+	if len(reports) == 0 {
 		return fmt.Sprintf("No hubo actividad registrada en el período %s.", period)
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Rendimiento %s:\n", period)
-	for _, in := range insights {
-		m := in.Metrics
-		fmt.Fprintf(&b,
-			"• %s — gasto: $%.2f ARS · impresiones: %d · clics: %d · alcance: %d · CTR: %.2f%% · CPC: $%.2f\n",
-			nameOr(in.CampaignName, in.CampaignID), m.Spend, m.Impressions, m.Clicks, m.Reach, m.CTR, m.CPC)
+	for _, r := range reports {
+		fmt.Fprintf(&b, "• %s (id %s)\n", nameOr(r.Insight.CampaignName, r.Insight.CampaignID), r.Insight.CampaignID)
+		b.WriteString(metricsReport(r.Insight.Metrics, r.Eval))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatBreakdown arma un resumen legible del desglose por audiencia.
+func formatBreakdown(br app.EvaluatedBreakdown, applied domain.DateRange) string {
+	period := periodES(applied)
+	if len(br.Segments) == 0 {
+		return fmt.Sprintf("No hubo actividad segmentada por %s en el período %s.",
+			dimensionES(br.Dimension), period)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Rendimiento por %s %s:\n", dimensionES(br.Dimension), period)
+	for _, s := range br.Segments {
+		label := s.Label
+		if strings.TrimSpace(label) == "" {
+			label = "(segmento sin dato)"
+		}
+		fmt.Fprintf(&b, "• %s\n", label)
+		b.WriteString(metricsReport(s.Metrics, s.Eval))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// metricsReport renderiza el bloque de métricas de un conjunto, con íconos por
+// estado y "no calculable" cuando falta el dato (Principios VIII y IX).
+func metricsReport(m domain.Metrics, e app.Evaluation) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "   gasto: $%.2f ARS · impresiones: %d · clics: %d · alcance: %d\n",
+		m.Spend, m.Impressions, m.Clicks, m.Reach)
+	fmt.Fprintf(&b, "   ROAS: %s · compras: %s · facturación: %s\n",
+		roasText(m, e), purchasesText(m), revenueText(m))
+	fmt.Fprintf(&b, "   CPA: %s · CTR enlace: %s · frecuencia: %s\n",
+		cpaText(m, e), linkCTRText(m, e), freqText(m, e))
+	if e.Insufficient {
+		b.WriteString("   ⚠️ Datos insuficientes para recomendar apagar o prender esta campaña.\n")
+	}
+	return b.String()
+}
+
+func periodES(r domain.DateRange) string {
+	return fmt.Sprintf("del %s al %s", r.Since.Format("02/01/2006"), r.Until.Format("02/01/2006"))
+}
+
+func icon(s domain.MetricStatus) string {
+	switch s {
+	case domain.StatusOK:
+		return "✅"
+	case domain.StatusWarn:
+		return "⚠️"
+	case domain.StatusBad:
+		return "❌"
+	default:
+		return "•"
+	}
+}
+
+func roasText(m domain.Metrics, e app.Evaluation) string {
+	if m.ROAS == nil {
+		return "no calculable (sin conversiones)"
+	}
+	if e.ROAS == domain.StatusNoData {
+		return fmt.Sprintf("%.2fx (datos insuficientes)", *m.ROAS)
+	}
+	return fmt.Sprintf("%s %.2fx", icon(e.ROAS), *m.ROAS)
+}
+
+func cpaText(m domain.Metrics, e app.Evaluation) string {
+	if m.CPA == nil {
+		return "no calculable (sin conversiones)"
+	}
+	if e.CPA == domain.StatusNoData {
+		return fmt.Sprintf("$%.2f ARS (datos insuficientes)", *m.CPA)
+	}
+	return fmt.Sprintf("%s $%.2f ARS (ticket ref $%.0f)", icon(e.CPA), *m.CPA, e.TicketUsed)
+}
+
+func purchasesText(m domain.Metrics) string {
+	if m.Purchases == nil {
+		return "sin datos"
+	}
+	return fmt.Sprintf("%d", *m.Purchases)
+}
+
+func revenueText(m domain.Metrics) string {
+	if m.Revenue == nil {
+		return "sin datos"
+	}
+	return fmt.Sprintf("$%.2f ARS", *m.Revenue)
+}
+
+func linkCTRText(m domain.Metrics, e app.Evaluation) string {
+	if e.LinkCTR == domain.StatusNoData {
+		return "sin datos suficientes"
+	}
+	return fmt.Sprintf("%s %.2f%%", icon(e.LinkCTR), m.LinkCTR)
+}
+
+func freqText(m domain.Metrics, e app.Evaluation) string {
+	if e.Frequency == domain.StatusNoData {
+		return "sin datos"
+	}
+	return fmt.Sprintf("%s %.2f", icon(e.Frequency), m.Frequency)
+}
+
+func dimensionES(d domain.BreakdownDimension) string {
+	switch d {
+	case domain.DimensionAge:
+		return "edad"
+	case domain.DimensionGender:
+		return "género"
+	case domain.DimensionRegion:
+		return "región"
+	case domain.DimensionPublisherPlatform:
+		return "plataforma"
+	case domain.DimensionPlatformPosition:
+		return "posición del anuncio"
+	default:
+		return string(d)
+	}
 }
 
 func nameOr(name, id string) string {

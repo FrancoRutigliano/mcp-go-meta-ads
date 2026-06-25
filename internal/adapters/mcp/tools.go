@@ -64,6 +64,31 @@ func insightsHandler(gi *app.GetInsights) server.ToolHandlerFunc {
 	}
 }
 
+// audienceHandler construye el handler de la tool get_audience_breakdown.
+func audienceHandler(uc *app.GetAudienceBreakdown) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		campaignID := req.GetString("campaign_id", "")
+		dim := domain.BreakdownDimension(req.GetString("dimension", ""))
+		since := req.GetString("since", "")
+		until := req.GetString("until", "")
+
+		rng, ok := parseOptionalRange(since, until)
+		if !ok {
+			return mcp.NewToolResultError(
+				"Indicá ambas fechas (desde y hasta) en formato AAAA-MM-DD, o ninguna para usar los últimos 30 días.",
+			), nil
+		}
+
+		br, applied, err := uc.Execute(ctx, campaignID, dim, rng)
+		if err != nil {
+			slog.Error("get_audience_breakdown falló", "tool", "get_audience_breakdown",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatBreakdown(br, applied)), nil
+	}
+}
+
 // parseOptionalRange interpreta las fechas opcionales. Devuelve (nil, true)
 // cuando no se pasó ninguna (se usará el default). Devuelve (nil, false) si el
 // par está incompleto o mal formado.
@@ -112,6 +137,31 @@ func insightsTool() mcp.Tool {
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("campaign_id",
 			mcp.Description("ID de una campaña específica. Si se omite, devuelve todas las campañas de la cuenta."),
+		),
+		mcp.WithString("since",
+			mcp.Description("Fecha de inicio del período en formato AAAA-MM-DD. Opcional (junto con 'until')."),
+		),
+		mcp.WithString("until",
+			mcp.Description("Fecha de fin del período en formato AAAA-MM-DD. Opcional (junto con 'since')."),
+		),
+	)
+}
+
+// audienceTool define el esquema de la tool get_audience_breakdown.
+func audienceTool() mcp.Tool {
+	return mcp.NewTool("get_audience_breakdown",
+		mcp.WithDescription("Desglosa el rendimiento (ROAS, CPA, compras, facturación, CTR de enlace, frecuencia) por una dimensión de audiencia: edad, género, región, plataforma o posición del anuncio. Si no se indica período, usa los últimos 30 días."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithString("dimension",
+			mcp.Required(),
+			mcp.Description("Dimensión por la que segmentar."),
+			mcp.Enum("age", "gender", "region", "publisher_platform", "platform_position"),
+		),
+		mcp.WithString("campaign_id",
+			mcp.Description("ID de una campaña específica. Si se omite, desglosa a nivel de toda la cuenta."),
 		),
 		mcp.WithString("since",
 			mcp.Description("Fecha de inicio del período en formato AAAA-MM-DD. Opcional (junto con 'until')."),

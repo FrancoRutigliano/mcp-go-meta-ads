@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mashats/meta-ads-manager/internal/app"
 	"github.com/mashats/meta-ads-manager/internal/domain"
 )
 
@@ -69,20 +70,70 @@ func TestFormatInsights_EmptyShowsPeriod(t *testing.T) {
 	}
 }
 
-func TestFormatInsights_RendersMetrics(t *testing.T) {
+func roas(v float64) *float64 { return &v }
+func pur(v int64) *int64      { return &v }
+
+func TestFormatInsights_RendersConversionMetrics(t *testing.T) {
 	applied := domain.DateRange{
 		Since: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 		Until: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
 	}
-	out := formatInsights([]domain.Insight{
-		{CampaignID: "1", CampaignName: "Ventas Q2", Range: applied, Metrics: domain.Metrics{
-			Spend: 12345.67, Impressions: 100000, Clicks: 2500, Reach: 80000, CTR: 2.5, CPC: 4.94,
-		}},
+	out := formatInsights([]app.CampaignInsight{
+		{
+			Insight: domain.Insight{CampaignID: "1", CampaignName: "Ventas Q2", Range: applied, Metrics: domain.Metrics{
+				Spend: 12345.67, Impressions: 100000, Reach: 80000,
+				LinkCTR: 1.2, Frequency: 2.0, ROAS: roas(3.0), Purchases: pur(20),
+			}},
+			Eval: app.Evaluation{ROAS: domain.StatusOK, LinkCTR: domain.StatusOK, Frequency: domain.StatusOK},
+		},
 	}, applied)
 
-	for _, want := range []string{"Ventas Q2", "12345.67", "100000", "2500", "2.50%"} {
+	for _, want := range []string{"Ventas Q2", "12345.67", "ROAS", "3.00x", "✅", "compras: 20"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("insights output missing %q in: %q", want, out)
+		}
+	}
+}
+
+// Principio IX: sin conversiones, ROAS/CPA se muestran como "no calculable", no 0.
+func TestFormatInsights_NoConversionsNotZero(t *testing.T) {
+	applied := domain.DateRange{
+		Since: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
+	}
+	out := formatInsights([]app.CampaignInsight{
+		{
+			Insight: domain.Insight{CampaignID: "2", CampaignName: "Mensajes", Metrics: domain.Metrics{Spend: 1000}},
+			Eval:    app.Evaluation{ROAS: domain.StatusNoData, CPA: domain.StatusNoData, Insufficient: true},
+		},
+	}, applied)
+
+	if !strings.Contains(out, "no calculable") {
+		t.Errorf("debe decir 'no calculable' sin conversiones: %q", out)
+	}
+	if strings.Contains(out, "ROAS: ✅ 0.00x") || strings.Contains(out, "ROAS: ❌ 0.00x") {
+		t.Errorf("no debe mostrar ROAS 0 como resultado: %q", out)
+	}
+	if !strings.Contains(out, "Datos insuficientes") {
+		t.Errorf("debe advertir datos insuficientes: %q", out)
+	}
+}
+
+func TestFormatBreakdown_RendersSegments(t *testing.T) {
+	applied := domain.DateRange{
+		Since: time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, 6, 24, 0, 0, 0, 0, time.UTC),
+	}
+	out := formatBreakdown(app.EvaluatedBreakdown{
+		Dimension: domain.DimensionAge,
+		Segments: []app.EvaluatedSegment{
+			{Label: "25-34", Metrics: domain.Metrics{Spend: 1000, ROAS: roas(4.0)}, Eval: app.Evaluation{ROAS: domain.StatusOK}},
+		},
+	}, applied)
+
+	for _, want := range []string{"edad", "25-34", "4.00x"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("breakdown output missing %q in: %q", want, out)
 		}
 	}
 }
