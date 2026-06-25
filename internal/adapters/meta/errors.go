@@ -3,6 +3,7 @@ package meta
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/mashats/meta-ads-manager/internal/domain"
 )
@@ -32,6 +33,13 @@ func translateError(status int, ge *graphError, op string) error {
 		kind = kindFromCode(ge.Code, ge.ErrorSubcode)
 	}
 
+	// Las combinaciones de breakdown inválidas vienen como código 100 genérico;
+	// las reconocemos por el mensaje y las tratamos como pedido inválido del
+	// usuario, no como fallo del sistema (Principio V + brief feature 002).
+	if kind == domain.KindUpstream && ge != nil && mentionsBreakdown(ge.Message) {
+		kind = domain.KindInvalidInput
+	}
+
 	var cause error
 	if ge != nil {
 		cause = fmt.Errorf("graph error: http=%d code=%d subcode=%d type=%s fbtrace=%s msg=%q",
@@ -40,6 +48,11 @@ func translateError(status int, ge *graphError, op string) error {
 		cause = fmt.Errorf("graph error: http=%d (sin cuerpo de error)", status)
 	}
 	return domain.NewError(kind, op, cause)
+}
+
+// mentionsBreakdown detecta errores de combinación de segmentación inválida.
+func mentionsBreakdown(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "breakdown")
 }
 
 // kindFromCode mapea los códigos de error de Meta a la semántica del dominio.

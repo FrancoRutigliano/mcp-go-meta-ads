@@ -25,7 +25,8 @@ const (
 	defaultBackoff    = 500 * time.Millisecond
 
 	campaignFields = "id,name,status,objective"
-	insightFields  = "campaign_id,campaign_name,spend,impressions,clicks,reach,ctr,cpc,date_start,date_stop"
+	insightFields  = "campaign_id,campaign_name,spend,impressions,clicks,reach,ctr,cpc,date_start,date_stop," +
+		"frequency,inline_link_clicks,inline_link_click_ctr,purchase_roas,actions,action_values,cost_per_action_type"
 )
 
 // Client implementa ports.MetaReader contra la Graph API.
@@ -142,6 +143,52 @@ func (c *Client) GetInsights(ctx context.Context, q domain.InsightQuery) ([]doma
 		return nil, domain.NewError(domain.KindUpstream, op, fmt.Errorf("parse: %w", err))
 	}
 	return insights, nil
+}
+
+// GetAudienceBreakdown implementa ports.MetaReader. Segmenta el rendimiento por
+// la dimensión pedida usando el parámetro breakdowns de la Graph API.
+func (c *Client) GetAudienceBreakdown(ctx context.Context, q domain.AudienceQuery) (domain.AudienceBreakdown, error) {
+	const op = "meta.GetAudienceBreakdown"
+
+	if !q.Dimension.Valid() {
+		return domain.AudienceBreakdown{}, domain.NewError(domain.KindInvalidInput, op,
+			fmt.Errorf("dimensión no soportada: %q", q.Dimension))
+	}
+	if err := q.Range.Valid(); err != nil {
+		return domain.AudienceBreakdown{}, domain.NewError(domain.KindInvalidInput, op, err)
+	}
+
+	node := c.accountID
+	if q.CampaignID != "" {
+		node = q.CampaignID
+	}
+
+	timeRange, err := json.Marshal(map[string]string{
+		"since": q.Range.Since.Format(graphDateLayout),
+		"until": q.Range.Until.Format(graphDateLayout),
+	})
+	if err != nil {
+		return domain.AudienceBreakdown{}, domain.NewError(domain.KindUpstream, op, err)
+	}
+
+	params := url.Values{}
+	params.Set("fields", insightFields)
+	params.Set("breakdowns", string(q.Dimension))
+	params.Set("time_range", string(timeRange))
+
+	body, err := c.get(ctx, node+"/insights", params, op)
+	if err != nil {
+		return domain.AudienceBreakdown{}, err
+	}
+	segments, err := parseBreakdown(body, q.Dimension)
+	if err != nil {
+		return domain.AudienceBreakdown{}, domain.NewError(domain.KindUpstream, op, fmt.Errorf("parse: %w", err))
+	}
+	return domain.AudienceBreakdown{
+		Dimension: q.Dimension,
+		Range:     q.Range,
+		Segments:  segments,
+	}, nil
 }
 
 // get ejecuta una solicitud GET con rate limiting y reintentos con backoff ante
