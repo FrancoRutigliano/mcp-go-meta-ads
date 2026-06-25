@@ -1,33 +1,43 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (none) → 1.0.0  [INITIAL RATIFICATION]
-Bump rationale: First adoption of the project constitution. MAJOR baseline.
+Version change: 1.0.0 → 1.1.0  [MINOR — adiciones, sin romper principios existentes]
+Bump rationale: Se incorpora el contexto de negocio y dos principios nuevos (métricas con
+  benchmarks; honestidad ante datos insuficientes). No se elimina ni redefine ningún principio
+  previo, por lo que el cambio es MINOR según la política de versionado de la governance.
 
-Principles defined (7):
-  I.   Confidencialidad del Token (NO NEGOCIABLE)
-  II.  Propose / Confirm para Gasto Real (NO NEGOCIABLE)
-  III. El Server es la Única Frontera con Meta (NO NEGOCIABLE)
-  IV.  Auditoría de Toda Escritura
-  V.   Errores Semánticos, Nunca Silenciados
-  VI.  Rate Limiting Obligatorio
-  VII. Mensajes Legibles para Usuario No Técnico
+Principles (9 — 7 preexistentes sin cambios + 2 nuevos):
+  I.    Confidencialidad del Token (NO NEGOCIABLE)            [sin cambios]
+  II.   Propose / Confirm para Gasto Real (NO NEGOCIABLE)     [sin cambios]
+  III.  El Server es la Única Frontera con Meta (NO NEGOCIABLE) [sin cambios]
+  IV.   Auditoría de Toda Escritura                           [sin cambios]
+  V.    Errores Semánticos, Nunca Silenciados                 [sin cambios]
+  VI.   Rate Limiting Obligatorio                             [sin cambios]
+  VII.  Mensajes Legibles para Usuario No Técnico             [sin cambios]
+  VIII. Métricas y Umbrales del Negocio                       [NUEVO]
+  IX.   Honestidad ante Datos Insuficientes (NO NEGOCIABLE)   [NUEVO]
 
 Sections added:
-  - Restricciones Técnicas y Stack (cubre el stack obligatorio: Go, mcp-go, hexagonal, Railway)
-  - Flujo de Desarrollo y Quality Gates
-  - Governance
+  - Contexto de Negocio (rubro, mercado, presupuesto): define el dominio sobre el que operan
+    los principios VII, VIII y IX.
 
-Sections removed: none (initial creation)
+Sections changed:
+  - Restricciones Técnicas y Stack: sin cambios de contenido (Go, mcp-go, hexagonal, Railway).
+  - Flujo de Desarrollo y Quality Gates: se añade el gate de benchmarks de métricas (Principio VIII).
+
+Sections removed: none
 
 Templates reviewed for alignment:
-  ✅ .specify/templates/plan-template.md     — "Constitution Check" gate is generic; principles map onto it. No edit required.
-  ✅ .specify/templates/spec-template.md     — uses MUST-style FRs and tech-agnostic success criteria; compatible. No edit required.
-  ✅ .specify/templates/tasks-template.md    — already includes logging, error-handling, security-hardening task slots that satisfy
-                                               Principles IV/V/VII. No edit required.
-  ✅ .specify/templates/checklist-template.md — generic; no constitution coupling.
+  ✅ .specify/templates/plan-template.md     — "Constitution Check" es genérico ("Gates determined
+                                               based on constitution file"); los principios nuevos
+                                               mapean sin editar la plantilla.
+  ✅ .specify/templates/spec-template.md     — FRs MUST-style y criterios de éxito tech-agnósticos;
+                                               compatible con benchmarks de negocio. Sin edición.
+  ✅ .specify/templates/tasks-template.md    — slots de logging/errores/seguridad cubren IV/V/VII;
+                                               las métricas se modelan como criterios de aceptación. Sin edición.
+  ✅ .specify/templates/checklist-template.md — genérico; sin acople a la constitución.
 
-Deferred / follow-up TODOs: none. RATIFICATION_DATE set to today (project initialized this session).
+Deferred / follow-up TODOs: none.
 -->
 
 # Meta Ads Manager Constitution
@@ -133,6 +143,61 @@ El usuario final no es técnico.
 **Rationale**: Un mensaje incomprensible sobre una operación de gasto erosiona la confianza y
 puede inducir decisiones erróneas. La claridad en la frontera con el usuario es parte del contrato.
 
+### VIII. Métricas y Umbrales del Negocio
+
+El análisis de rendimiento DEBE interpretarse contra los umbrales de este negocio, no en
+abstracto. Toda lectura, alerta o recomendación que involucre rendimiento DEBE evaluarse
+con estos benchmarks de referencia:
+
+- **ROAS** (retorno sobre inversión publicitaria): el mínimo aceptable es **2x**. Por debajo
+  de 2x, el análisis DEBE señalarlo explícitamente como bajo rendimiento.
+- **CPA** (costo por adquisición): DEBE evaluarse siempre **contra el ticket promedio** del
+  negocio; un CPA nunca se reporta como "bueno" o "malo" en aislamiento, sino en relación al
+  valor de la venta.
+- **CTR** (click-through rate): el rango de referencia saludable es **0,8 % – 1,5 %**. Valores
+  fuera de ese rango DEBEN destacarse (por debajo: creatividad/segmentación; muy por encima:
+  posible tráfico de baja calidad).
+- **Frecuencia**: DEBE emitirse una alerta cuando supere **3,5** (riesgo de fatiga de audiencia).
+
+Estos umbrales son la referencia por defecto; cuando un análisis use otro umbral DEBE
+justificarlo de forma explícita. Los valores DEBEN poder ajustarse por configuración sin
+reescribir lógica, pero los defaults son los aquí definidos.
+
+**Rationale**: Con un presupuesto acotado (ver Contexto de Negocio), cada peso mal asignado
+pesa. Fijar umbrales explícitos convierte el análisis en accionable para un usuario no técnico
+y evita interpretaciones arbitrarias de las mismas cifras.
+
+### IX. Honestidad ante Datos Insuficientes (NO NEGOCIABLE)
+
+El sistema NUNCA DEBE inventar conclusiones a partir de datos insuficientes.
+
+- Cuando el volumen de datos (impresiones, clics, conversiones, días del período) sea demasiado
+  bajo para sostener una conclusión, el sistema DEBE decirlo explícitamente en lugar de afirmar
+  una tendencia o recomendación.
+- Está prohibido presentar como certeza lo que es ruido estadístico; una métrica calculada sobre
+  una muestra ínfima DEBE acompañarse de la advertencia correspondiente.
+- Ante ausencia de datos para el período o la entidad pedida, la respuesta DEBE indicar que no
+  hay datos suficientes, no devolver un resultado vacío que parezca una conclusión.
+
+**Rationale**: Sobre decisiones de gasto real, una conclusión falsamente confiada es peor que
+admitir incertidumbre: induce a reasignar presupuesto sobre evidencia inexistente. La honestidad
+sobre los límites de los datos es condición de confianza con un usuario no técnico.
+
+## Contexto de Negocio
+
+Estos principios operan sobre un negocio concreto; las decisiones de diseño DEBEN tenerlo presente:
+
+- **Rubro**: e-commerce de indumentaria, específicamente **sombreros de fieltro, sombreros de
+  verano, boinas de mujer y boinas de hombre**. Es un negocio con estacionalidad marcada
+  (fieltro/invierno vs. verano), lo que el análisis DEBE poder reflejar.
+- **Mercado**: **Argentina** (moneda de la cuenta: ARS; mensajes y fechas en convención local).
+- **Presupuesto publicitario**: **menor a USD 500/mes**. Es un presupuesto acotado: las
+  recomendaciones DEBEN ser realistas para esa escala y el costo de error es alto (Principio VIII).
+
+**Rationale**: Sin el contexto del negocio, las métricas y los mensajes serían genéricos. Anclar
+el rubro, el mercado y el presupuesto hace que los umbrales (Principio VIII) y la honestidad de
+datos (Principio IX) sean significativos en lugar de abstractos.
+
 ## Restricciones Técnicas y Stack
 
 El stack siguiente es obligatorio salvo enmienda formal de esta constitución:
@@ -157,6 +222,9 @@ y YAGNI y registrarse en la sección "Complexity Tracking" del plan correspondie
 - **Revisión de seguridad**: cualquier cambio que toque el manejo del token, la frontera con Meta,
   o el log de auditoría DEBE pasar una revisión de seguridad antes del merge (Principios I, III, IV).
 - **Secretos**: ningún commit DEBE contener secretos; esto se verifica antes de cada merge.
+- **Benchmarks de métricas**: toda feature que lea o interprete rendimiento DEBE aplicar los
+  umbrales del Principio VIII (ROAS, CPA vs. ticket, CTR, frecuencia) y respetar el Principio IX
+  ante muestras insuficientes; los tests DEBEN cubrir los casos de umbral y de datos insuficientes.
 
 ## Governance
 
@@ -174,4 +242,4 @@ Esta constitución supersede cualquier otra práctica o convención del proyecto
 - **Revisión periódica**: el cumplimiento se evalúa en cada plan vía el Constitution Check; las
   desviaciones recurrentes DEBEN motivar una enmienda explícita en lugar de tolerarse de facto.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-23 | **Last Amended**: 2026-06-23
+**Version**: 1.1.0 | **Ratified**: 2026-06-23 | **Last Amended**: 2026-06-24
