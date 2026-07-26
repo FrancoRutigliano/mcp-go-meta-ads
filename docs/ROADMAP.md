@@ -41,12 +41,15 @@ campañas de Meta Ads hablando en español.
 - ✅ **008 — Auth del endpoint MCP** (bearer `MCP_AUTH_TOKEN`): middleware con comparación en
   tiempo constante. Si la var no está seteada, queda abierto y lo advierte en el log.
   **Hecho — falta setear `MCP_AUTH_TOKEN` en Railway y re-conectar el cliente con el header.**
-- **009 — Cimiento de escritura**: flujo **propose/confirm** (Principio II) + **auditoría**
-  (Principio IV) + scope `ads_management`. Ninguna escritura sin propose previo.
+- ✅ **009 — Cimiento de escritura**: flujo **propose/confirm** (Principio II) + **auditoría**
+  estructurada (Principio IV) + puerto `MetaWriter` separado + store de propuestas en memoria.
+  Primera operación real incluida: **pausar/activar campaña** (`propose_campaign_status` +
+  `confirm_action`). Ninguna escritura sin propose previo válido.
+  **Hecho — falta redeploy + token `ads_management` para que la escritura funcione.**
 
 ### ✍️ Escritura (después de 008 + 009)
-- **010 — Acciones sobre campañas**: pausar/activar, ajustar presupuesto ("priorizar la plata en
-  lo que funciona"). propose/confirm.
+- **010 — Más acciones sobre campañas**: ajustar presupuesto ("priorizar la plata en lo que
+  funciona") sobre el mismo cimiento propose/confirm. (Pausar/activar ya está en 009.)
 - **011 — Gestión de públicos (escritura)**: crear Custom/Lookalike/Saved audiences, editar
   targeting de un ad set. propose/confirm. ⚠️ Custom Audiences desde lista de clientes toca PII.
 
