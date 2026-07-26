@@ -10,7 +10,9 @@ package main
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/mark3labs/mcp-go/server"
@@ -58,15 +60,29 @@ func main() {
 	mcpServer := mcpadapter.NewServer(serverName, serverVersion, listCampaigns, getInsights, getAudienceBreakdown, getFunnel)
 
 	// Transporte Streamable HTTP sobre $PORT (apto para contenedor/Railway).
-	httpServer := server.NewStreamableHTTPServer(mcpServer,
+	streamable := server.NewStreamableHTTPServer(mcpServer,
 		server.WithEndpointPath(cfg.Endpoint),
 	)
+
+	// Auth del endpoint: si MCP_AUTH_TOKEN está configurado, se exige bearer.
+	// Si no, el endpoint queda abierto y lo advertimos de forma explícita.
+	if cfg.AuthToken == "" {
+		slog.Warn("MCP_AUTH_TOKEN no configurado: el endpoint queda ABIERTO (sin autenticación)")
+	} else {
+		slog.Info("autenticación del endpoint MCP habilitada (bearer)")
+	}
+	handler := mcpadapter.AuthMiddleware(cfg.AuthToken, streamable)
 
 	addr := ":" + cfg.Port
 	slog.Info("servidor MCP escuchando", "addr", addr, "endpoint", cfg.Endpoint,
 		"account", cfg.AccountID, "api_version", cfg.APIVersion)
 
-	if err := httpServer.Start(addr); err != nil {
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := httpServer.ListenAndServe(); err != nil {
 		slog.Error("el servidor terminó con error", "error", err)
 		os.Exit(1)
 	}

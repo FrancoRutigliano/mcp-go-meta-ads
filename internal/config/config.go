@@ -36,6 +36,7 @@ type Config struct {
 	APIVersion  string
 	Port        string
 	Endpoint    string
+	AuthToken   string                   // bearer del endpoint MCP; vacío = abierto
 	Thresholds  domain.Thresholds        // umbrales de negocio (Principio VIII)
 	Sufficiency domain.SufficiencyPolicy // mínimos de muestra (Principio IX)
 }
@@ -78,6 +79,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		APIVersion:  apiVersion,
 		Port:        port,
 		Endpoint:    defaultEndpoint,
+		AuthToken:   strings.TrimSpace(getenv("MCP_AUTH_TOKEN")),
 		Thresholds:  thresholds,
 		Sufficiency: sufficiency,
 	}, nil
