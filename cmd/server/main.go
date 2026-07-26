@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpadapter "github.com/mashats/meta-ads-manager/internal/adapters/mcp"
+	"github.com/mashats/meta-ads-manager/internal/adapters/memstore"
 	"github.com/mashats/meta-ads-manager/internal/adapters/meta"
 	"github.com/mashats/meta-ads-manager/internal/app"
 	"github.com/mashats/meta-ads-manager/internal/config"
@@ -57,8 +58,22 @@ func main() {
 	getFunnel := app.NewGetFunnel(reader)
 	getAdPerformance := app.NewGetAdPerformance(reader, cfg.Thresholds, cfg.Sufficiency)
 
+	// Escritura: store de propuestas en memoria + par propose/confirm. El mismo
+	// cliente Meta implementa lectura y escritura; el confirm audita vía slog.
+	proposals := memstore.New()
+	proposeStatus := app.NewProposeCampaignStatus(reader, proposals)
+	confirm := app.NewConfirmProposal(proposals, reader, slog.Default())
+
 	// Adaptador de entrada: tools MCP.
-	mcpServer := mcpadapter.NewServer(serverName, serverVersion, listCampaigns, getInsights, getAudienceBreakdown, getFunnel, getAdPerformance)
+	mcpServer := mcpadapter.NewServer(serverName, serverVersion, mcpadapter.Deps{
+		ListCampaigns: listCampaigns,
+		Insights:      getInsights,
+		Audience:      getAudienceBreakdown,
+		Funnel:        getFunnel,
+		AdPerformance: getAdPerformance,
+		ProposeStatus: proposeStatus,
+		Confirm:       confirm,
+	})
 
 	// Transporte Streamable HTTP sobre $PORT (apto para contenedor/Railway).
 	streamable := server.NewStreamableHTTPServer(mcpServer,

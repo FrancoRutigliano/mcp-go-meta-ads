@@ -8,8 +8,20 @@ import (
 	"github.com/mashats/meta-ads-manager/internal/app"
 )
 
-// NewServer construye el servidor MCP con las tools de lectura registradas.
-func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights, gab *app.GetAudienceBreakdown, gf *app.GetFunnel, gap *app.GetAdPerformance) *server.MCPServer {
+// Deps reúne los casos de uso que el servidor MCP expone como tools.
+type Deps struct {
+	ListCampaigns *app.ListCampaigns
+	Insights      *app.GetInsights
+	Audience      *app.GetAudienceBreakdown
+	Funnel        *app.GetFunnel
+	AdPerformance *app.GetAdPerformance
+	ProposeStatus *app.ProposeCampaignStatus
+	Confirm       *app.ConfirmProposal
+}
+
+// NewServer construye el servidor MCP con las tools registradas: lectura y el
+// par propose/confirm para escritura (Constitución, Principio II).
+func NewServer(name, version string, d Deps) *server.MCPServer {
 	s := server.NewMCPServer(
 		name,
 		version,
@@ -17,11 +29,16 @@ func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights,
 		server.WithRecovery(),
 	)
 
-	s.AddTool(campaignsTool(), campaignsHandler(lc))
-	s.AddTool(insightsTool(), insightsHandler(gi))
-	s.AddTool(audienceTool(), audienceHandler(gab))
-	s.AddTool(funnelTool(), funnelHandler(gf))
-	s.AddTool(adPerformanceTool(), adPerformanceHandler(gap))
+	// Lectura.
+	s.AddTool(campaignsTool(), campaignsHandler(d.ListCampaigns))
+	s.AddTool(insightsTool(), insightsHandler(d.Insights))
+	s.AddTool(audienceTool(), audienceHandler(d.Audience))
+	s.AddTool(funnelTool(), funnelHandler(d.Funnel))
+	s.AddTool(adPerformanceTool(), adPerformanceHandler(d.AdPerformance))
+
+	// Escritura: dos pasos (propose sin efecto → confirm aplica).
+	s.AddTool(proposeCampaignStatusTool(), proposeCampaignStatusHandler(d.ProposeStatus))
+	s.AddTool(confirmActionTool(), confirmActionHandler(d.Confirm))
 
 	return s
 }

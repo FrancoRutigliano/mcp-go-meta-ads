@@ -13,6 +13,7 @@ import (
 // devuelve datos/errores predefinidos.
 type fakeReader struct {
 	campaigns    []domain.Campaign
+	campaign     domain.Campaign
 	insights     []domain.Insight
 	breakdown    domain.AudienceBreakdown
 	ads          []domain.AdInsight
@@ -46,6 +47,11 @@ func (f *fakeReader) GetAdInsights(_ context.Context, q domain.AdQuery) ([]domai
 	f.called = true
 	f.gotAdQ = q
 	return f.ads, f.err
+}
+
+func (f *fakeReader) GetCampaign(_ context.Context, id string) (domain.Campaign, error) {
+	f.called = true
+	return f.campaign, f.err
 }
 
 // helpers de umbrales/suficiencia por defecto para construir casos de uso.

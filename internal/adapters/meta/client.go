@@ -41,8 +41,11 @@ type Client struct {
 	backoff    time.Duration
 }
 
-// Compile-time: el cliente satisface el puerto del dominio.
-var _ ports.MetaReader = (*Client)(nil)
+// Compile-time: el cliente satisface los puertos del dominio.
+var (
+	_ ports.MetaReader = (*Client)(nil)
+	_ ports.MetaWriter = (*Client)(nil)
+)
 
 // Option configura el cliente.
 type Option func(*Client)
@@ -145,6 +148,40 @@ func (c *Client) GetInsights(ctx context.Context, q domain.InsightQuery) ([]doma
 	return insights, nil
 }
 
+// GetCampaign implementa ports.MetaReader. Devuelve una campaña puntual.
+func (c *Client) GetCampaign(ctx context.Context, id string) (domain.Campaign, error) {
+	const op = "meta.GetCampaign"
+	if id == "" {
+		return domain.Campaign{}, domain.NewError(domain.KindInvalidInput, op, fmt.Errorf("falta el id de campaña"))
+	}
+	params := url.Values{}
+	params.Set("fields", campaignFields)
+
+	body, err := c.get(ctx, id, params, op)
+	if err != nil {
+		return domain.Campaign{}, err
+	}
+	campaign, err := parseCampaign(body)
+	if err != nil {
+		return domain.Campaign{}, domain.NewError(domain.KindUpstream, op, fmt.Errorf("parse: %w", err))
+	}
+	return campaign, nil
+}
+
+// UpdateCampaignStatus implementa ports.MetaWriter. Aplica el cambio de estado
+// (POST irreversible) sobre la campaña real.
+func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID string, status domain.CampaignStatus) error {
+	const op = "meta.UpdateCampaignStatus"
+	if campaignID == "" {
+		return domain.NewError(domain.KindInvalidInput, op, fmt.Errorf("falta el id de campaña"))
+	}
+	params := url.Values{}
+	params.Set("status", string(status))
+
+	_, err := c.post(ctx, campaignID, params, op)
+	return err
+}
+
 // GetAdInsights implementa ports.MetaReader. Devuelve el rendimiento por
 // anuncio (level=ad) para el período pedido.
 func (c *Client) GetAdInsights(ctx context.Context, q domain.AdQuery) ([]domain.AdInsight, error) {
@@ -232,16 +269,26 @@ func (c *Client) GetAudienceBreakdown(ctx context.Context, q domain.AudienceQuer
 	}, nil
 }
 
-// get ejecuta una solicitud GET con rate limiting y reintentos con backoff ante
-// respuestas de rate limiting (Constitución, Principio VI).
+// get ejecuta un GET (lectura).
 func (c *Client) get(ctx context.Context, path string, params url.Values, op string) ([]byte, error) {
+	return c.request(ctx, http.MethodGet, path, params, op)
+}
+
+// post ejecuta un POST (escritura).
+func (c *Client) post(ctx context.Context, path string, params url.Values, op string) ([]byte, error) {
+	return c.request(ctx, http.MethodPost, path, params, op)
+}
+
+// request ejecuta una solicitud con rate limiting y reintentos con backoff ante
+// respuestas de rate limiting (Constitución, Principio VI).
+func (c *Client) request(ctx context.Context, method, path string, params url.Values, op string) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, domain.NewError(domain.KindUpstream, op, err)
 		}
 
-		body, err := c.do(ctx, path, params, op)
+		body, err := c.do(ctx, method, path, params, op)
 		if err == nil {
 			return body, nil
 		}
@@ -260,14 +307,14 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, op str
 	return nil, lastErr
 }
 
-func (c *Client) do(ctx context.Context, path string, params url.Values, op string) ([]byte, error) {
+func (c *Client) do(ctx context.Context, method, path string, params url.Values, op string) ([]byte, error) {
 	// El token va en la query pero nunca se loguea: no registramos URLs.
 	full := c.baseURL + "/" + c.apiVersion + "/" + path
 	q := url.Values{}
 	maps.Copy(q, params)
 	q.Set("access_token", c.token)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, full+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, domain.NewError(domain.KindUpstream, op, err)
 	}

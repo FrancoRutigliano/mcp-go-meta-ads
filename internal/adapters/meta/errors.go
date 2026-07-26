@@ -61,6 +61,8 @@ func kindFromCode(code, subcode int) domain.Kind {
 	switch code {
 	case 190, 102, 104, 2500: // token inválido / sesión / autenticación
 		return domain.KindUnauthorized
+	case 10, 200, 294: // sin permiso para la acción (p. ej. token de sólo lectura)
+		return domain.KindUnauthorized
 	case 4, 17, 32, 613: // application/user/account rate limits
 		return domain.KindRateLimited
 	case 100:

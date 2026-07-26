@@ -64,6 +64,40 @@ func insightsHandler(gi *app.GetInsights) server.ToolHandlerFunc {
 	}
 }
 
+// proposeCampaignStatusHandler construye el handler de propose_campaign_status.
+// Es el paso SIN efecto (Principio II): calcula el cambio y devuelve un id.
+func proposeCampaignStatusHandler(uc *app.ProposeCampaignStatus) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		campaignID := req.GetString("campaign_id", "")
+		action := domain.CampaignAction(req.GetString("action", ""))
+
+		p, err := uc.Execute(ctx, campaignID, action)
+		if err != nil {
+			slog.Error("propose_campaign_status falló", "tool", "propose_campaign_status",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatProposal(p)), nil
+	}
+}
+
+// confirmActionHandler construye el handler de confirm_action. Es el ÚNICO paso
+// de escritura, y sólo aplica propuestas existentes (Principio II).
+func confirmActionHandler(uc *app.ConfirmProposal) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		proposalID := req.GetString("proposal_id", "")
+		confirmedBy := req.GetString("confirmed_by", "")
+
+		p, err := uc.Execute(ctx, proposalID, confirmedBy)
+		if err != nil {
+			slog.Error("confirm_action falló", "tool", "confirm_action",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatConfirmation(p)), nil
+	}
+}
+
 // adPerformanceHandler construye el handler de la tool get_ad_performance.
 func adPerformanceHandler(uc *app.GetAdPerformance) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -192,6 +226,43 @@ func insightsTool() mcp.Tool {
 		),
 		mcp.WithString("until",
 			mcp.Description("Fecha de fin del período en formato AAAA-MM-DD. Opcional (junto con 'since')."),
+		),
+	)
+}
+
+// proposeCampaignStatusTool define el esquema de propose_campaign_status.
+func proposeCampaignStatusTool() mcp.Tool {
+	return mcp.NewTool("propose_campaign_status",
+		mcp.WithDescription("Paso 1 de 2 (SIN efecto): propone pausar o activar una campaña y devuelve un proposal_id. NO cambia nada en Meta; para aplicar el cambio hay que confirmar con la tool confirm_action."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("campaign_id",
+			mcp.Required(),
+			mcp.Description("ID de la campaña a pausar o activar."),
+		),
+		mcp.WithString("action",
+			mcp.Required(),
+			mcp.Description("Acción a proponer: 'pause' (pausar) o 'activate' (activar)."),
+			mcp.Enum("pause", "activate"),
+		),
+	)
+}
+
+// confirmActionTool define el esquema de confirm_action. Es DESTRUCTIVA: aplica
+// un cambio real e irreversible sobre la cuenta.
+func confirmActionTool() mcp.Tool {
+	return mcp.NewTool("confirm_action",
+		mcp.WithDescription("Paso 2 de 2 (APLICA el cambio): ejecuta una propuesta creada antes con una tool propose_*. Requiere el proposal_id devuelto por el paso propose. Afecta la cuenta de forma real e irreversible."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(true),
+		mcp.WithString("proposal_id",
+			mcp.Required(),
+			mcp.Description("El proposal_id devuelto por el paso propose."),
+		),
+		mcp.WithString("confirmed_by",
+			mcp.Description("Quién confirma el cambio (queda registrado en la auditoría). Opcional."),
 		),
 	)
 }

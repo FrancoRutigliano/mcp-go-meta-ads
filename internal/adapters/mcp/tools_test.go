@@ -8,12 +8,27 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/mashats/meta-ads-manager/internal/adapters/memstore"
 	"github.com/mashats/meta-ads-manager/internal/app"
 	"github.com/mashats/meta-ads-manager/internal/domain"
 )
 
+// noopWriter es un MetaWriter de prueba que registra la última escritura.
+type noopWriter struct {
+	calls  int
+	status domain.CampaignStatus
+	err    error
+}
+
+func (w *noopWriter) UpdateCampaignStatus(_ context.Context, _ string, s domain.CampaignStatus) error {
+	w.calls++
+	w.status = s
+	return w.err
+}
+
 type fakeReader struct {
 	campaigns []domain.Campaign
+	campaign  domain.Campaign
 	insights  []domain.Insight
 	breakdown domain.AudienceBreakdown
 	ads       []domain.AdInsight
@@ -31,6 +46,9 @@ func (f *fakeReader) GetAudienceBreakdown(context.Context, domain.AudienceQuery)
 }
 func (f *fakeReader) GetAdInsights(context.Context, domain.AdQuery) ([]domain.AdInsight, error) {
 	return f.ads, f.err
+}
+func (f *fakeReader) GetCampaign(context.Context, string) (domain.Campaign, error) {
+	return f.campaign, f.err
 }
 
 func th() domain.Thresholds        { return domain.DefaultThresholds() }
@@ -198,13 +216,61 @@ func TestAdPerformanceHandler_Success(t *testing.T) {
 	}
 }
 
+func TestProposeThenConfirm_Flow(t *testing.T) {
+	fake := &fakeReader{campaign: domain.Campaign{ID: "1", Name: "Ventas", Status: domain.CampaignActive}}
+	store := memstore.New()
+	writer := &noopWriter{}
+
+	propose := proposeCampaignStatusHandler(app.NewProposeCampaignStatus(fake, store))
+	confirm := confirmActionHandler(app.NewConfirmProposal(store, writer, nil))
+
+	// 1) propose: no debe escribir, y devuelve un proposal_id.
+	res, _ := propose(context.Background(), newRequest(map[string]any{"campaign_id": "1", "action": "pause"}))
+	if res.IsError {
+		t.Fatalf("propose falló: %q", resultText(res))
+	}
+	out := resultText(res)
+	if writer.calls != 0 {
+		t.Fatal("propose NO debe escribir en Meta")
+	}
+	// Extraer el proposal_id del texto (formato prop_...).
+	idx := strings.Index(out, "prop_")
+	if idx < 0 {
+		t.Fatalf("no encontré proposal_id en: %q", out)
+	}
+	id := strings.Fields(out[idx:])[0]
+
+	// 2) confirm: aplica el cambio.
+	res2, _ := confirm(context.Background(), newRequest(map[string]any{"proposal_id": id, "confirmed_by": "Mariana"}))
+	if res2.IsError {
+		t.Fatalf("confirm falló: %q", resultText(res2))
+	}
+	if writer.calls != 1 || writer.status != domain.CampaignPaused {
+		t.Errorf("confirm no aplicó el cambio: %+v", writer)
+	}
+	if !strings.Contains(resultText(res2), "Hecho") {
+		t.Errorf("confirmación inesperada: %q", resultText(res2))
+	}
+}
+
+// Principio II: confirmar sin un propose previo válido debe fallar.
+func TestConfirm_WithoutProposeRejected(t *testing.T) {
+	confirm := confirmActionHandler(app.NewConfirmProposal(memstore.New(), &noopWriter{}, nil))
+	res, _ := confirm(context.Background(), newRequest(map[string]any{"proposal_id": "prop_inventado"}))
+	if !res.IsError {
+		t.Fatal("confirmar un id inexistente debe dar error")
+	}
+}
+
 func TestToolBuilders_HaveExpectedNames(t *testing.T) {
 	cases := map[string]string{
-		"get_campaigns":          campaignsTool().Name,
-		"get_campaigns_insights": insightsTool().Name,
-		"get_audience_breakdown": audienceTool().Name,
-		"get_conversion_funnel":  funnelTool().Name,
-		"get_ad_performance":     adPerformanceTool().Name,
+		"get_campaigns":           campaignsTool().Name,
+		"get_campaigns_insights":  insightsTool().Name,
+		"get_audience_breakdown":  audienceTool().Name,
+		"get_conversion_funnel":   funnelTool().Name,
+		"get_ad_performance":      adPerformanceTool().Name,
+		"propose_campaign_status": proposeCampaignStatusTool().Name,
+		"confirm_action":          confirmActionTool().Name,
 	}
 	for want, got := range cases {
 		if got != want {
@@ -215,13 +281,16 @@ func TestToolBuilders_HaveExpectedNames(t *testing.T) {
 
 func TestNewServer_BuildsWithAllUseCases(t *testing.T) {
 	fake := &fakeReader{}
-	srv := NewServer("test", "0.0.0",
-		app.NewListCampaigns(fake),
-		app.NewGetInsights(fake, th(), su()),
-		app.NewGetAudienceBreakdown(fake, th(), su()),
-		app.NewGetFunnel(fake),
-		app.NewGetAdPerformance(fake, th(), su()),
-	)
+	store := memstore.New()
+	srv := NewServer("test", "0.0.0", Deps{
+		ListCampaigns: app.NewListCampaigns(fake),
+		Insights:      app.NewGetInsights(fake, th(), su()),
+		Audience:      app.NewGetAudienceBreakdown(fake, th(), su()),
+		Funnel:        app.NewGetFunnel(fake),
+		AdPerformance: app.NewGetAdPerformance(fake, th(), su()),
+		ProposeStatus: app.NewProposeCampaignStatus(fake, store),
+		Confirm:       app.NewConfirmProposal(store, &noopWriter{}, nil),
+	})
 	if srv == nil {
 		t.Fatal("NewServer devolvió nil")
 	}

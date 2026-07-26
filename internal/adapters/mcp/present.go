@@ -83,6 +83,37 @@ func formatBreakdown(br app.EvaluatedBreakdown, applied domain.DateRange) string
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// formatProposal presenta una propuesta de escritura SIN aplicar, explicando
+// cómo confirmarla (Principio II: propose no tiene efecto).
+func formatProposal(p domain.Proposal) string {
+	before := statusES(domain.CampaignStatus(p.Before))
+	after := statusES(domain.CampaignStatus(p.After))
+	return fmt.Sprintf(
+		"Propuesta lista (todavía no cambié nada):\n"+
+			"• Acción: %s la campaña \"%s\" — de %s a %s.\n"+
+			"• Para aplicarlo, confirmá con la tool confirm_action usando proposal_id=%s\n"+
+			"• La propuesta vence a las %s.",
+		accionES(p.After), nameOr(p.CampaignName, p.CampaignID), before, after,
+		p.ID, p.ExpiresAt.Format("15:04"),
+	)
+}
+
+// formatConfirmation presenta el resultado de una escritura ya aplicada.
+func formatConfirmation(p domain.Proposal) string {
+	return fmt.Sprintf("✅ Hecho. La campaña \"%s\" pasó de %s a %s.",
+		nameOr(p.CampaignName, p.CampaignID),
+		statusES(domain.CampaignStatus(p.Before)),
+		statusES(domain.CampaignStatus(p.After)))
+}
+
+// accionES traduce el estado destino a un verbo de acción.
+func accionES(after string) string {
+	if domain.CampaignStatus(after) == domain.CampaignActive {
+		return "activar"
+	}
+	return "pausar"
+}
+
 // formatAdPerformance arma el ranking de anuncios (mejor a peor), indicando el
 // período aplicado y el estado de cada métrica vs umbral.
 func formatAdPerformance(reports []app.AdReport, applied domain.DateRange) string {

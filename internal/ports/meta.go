@@ -12,12 +12,14 @@ import (
 	"github.com/mashats/meta-ads-manager/internal/domain"
 )
 
-// MetaReader expone las operaciones de SÓLO LECTURA contra Meta que esta
-// feature necesita. No incluye ninguna operación de escritura (las features de
-// escritura agregarán su propio puerto con el flujo propose/confirm).
+// MetaReader expone las operaciones de SÓLO LECTURA contra Meta.
 type MetaReader interface {
 	// ListCampaigns devuelve las campañas de la cuenta configurada.
 	ListCampaigns(ctx context.Context, q domain.CampaignQuery) ([]domain.Campaign, error)
+
+	// GetCampaign devuelve una campaña puntual (para calcular el estado actual
+	// en el paso propose).
+	GetCampaign(ctx context.Context, id string) (domain.Campaign, error)
 
 	// GetInsights devuelve el rendimiento por campaña para el período pedido.
 	GetInsights(ctx context.Context, q domain.InsightQuery) ([]domain.Insight, error)
@@ -29,4 +31,13 @@ type MetaReader interface {
 	// GetAdInsights devuelve el rendimiento por anuncio (creativo) para el
 	// período pedido.
 	GetAdInsights(ctx context.Context, q domain.AdQuery) ([]domain.AdInsight, error)
+}
+
+// MetaWriter expone las operaciones de ESCRITURA contra Meta. Está separado de
+// MetaReader a propósito: sólo el caso de uso de confirm (tras un propose
+// válido) lo usa, nunca las tools de lectura (Constitución, Principios II y III).
+type MetaWriter interface {
+	// UpdateCampaignStatus pausa o activa una campaña (operación irreversible
+	// sobre el estado real).
+	UpdateCampaignStatus(ctx context.Context, campaignID string, status domain.CampaignStatus) error
 }

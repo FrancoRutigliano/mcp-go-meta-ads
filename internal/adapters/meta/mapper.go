@@ -106,6 +106,21 @@ func parseCampaigns(body []byte) ([]domain.Campaign, error) {
 	return out, nil
 }
 
+// parseCampaign convierte el JSON de una campaña puntual (objeto suelto, sin
+// sobre "data") en una entidad del dominio.
+func parseCampaign(body []byte) (domain.Campaign, error) {
+	var rc rawCampaign
+	if err := json.Unmarshal(body, &rc); err != nil {
+		return domain.Campaign{}, err
+	}
+	return domain.Campaign{
+		ID:        rc.ID,
+		Name:      rc.Name,
+		Status:    domain.CampaignStatus(rc.Status),
+		Objective: rc.Objective,
+	}, nil
+}
+
 // parseInsights convierte el JSON de insights (nivel campaña) en entidades.
 func parseInsights(body []byte) ([]domain.Insight, error) {
 	var env dataEnvelope[rawInsight]
