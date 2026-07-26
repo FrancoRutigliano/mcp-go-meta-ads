@@ -58,15 +58,33 @@ type rawInsight struct {
 
 const graphDateLayout = "2006-01-02"
 
-// purchaseActionTypes lista, por orden de prioridad, los action_type que Meta
-// usa para "compra". Se toma el primero presente para evitar doble conteo.
-var purchaseActionTypes = []string{
-	"purchase",
-	"omni_purchase",
-	"offsite_conversion.fb_pixel_purchase",
-	"onsite_web_purchase",
-	"onsite_web_app_purchase",
-}
+// Listas de action_type por etapa, en orden de prioridad. Se toma el primero
+// presente para evitar doble conteo entre variantes (omni / pixel / onsite).
+var (
+	purchaseActionTypes = []string{
+		"purchase",
+		"omni_purchase",
+		"offsite_conversion.fb_pixel_purchase",
+		"onsite_web_purchase",
+		"onsite_web_app_purchase",
+	}
+	landingPageViewTypes = []string{
+		"landing_page_view",
+		"omni_landing_page_view",
+	}
+	addToCartTypes = []string{
+		"add_to_cart",
+		"omni_add_to_cart",
+		"offsite_conversion.fb_pixel_add_to_cart",
+		"onsite_web_add_to_cart",
+	}
+	initiateCheckoutTypes = []string{
+		"initiate_checkout",
+		"omni_initiated_checkout",
+		"offsite_conversion.fb_pixel_initiate_checkout",
+		"onsite_web_initiate_checkout",
+	}
+)
 
 // parseCampaigns convierte el JSON de campañas en entidades del dominio.
 func parseCampaigns(body []byte) ([]domain.Campaign, error) {
@@ -140,26 +158,38 @@ func metricsFrom(ri rawInsight) domain.Metrics {
 		Frequency:   atof(ri.Frequency),
 	}
 
-	if v, ok := pickAction(ri.Actions); ok {
+	if v, ok := findAction(ri.Actions, purchaseActionTypes); ok {
 		n := int64(v)
 		m.Purchases = &n
 	}
-	if v, ok := pickAction(ri.ActionValues); ok {
+	if v, ok := findAction(ri.ActionValues, purchaseActionTypes); ok {
 		m.Revenue = &v
 	}
-	if v, ok := pickAction(ri.PurchaseROAS); ok {
+	if v, ok := findAction(ri.PurchaseROAS, purchaseActionTypes); ok {
 		m.ROAS = &v
 	}
-	if v, ok := pickAction(ri.CostPerActionType); ok {
+	if v, ok := findAction(ri.CostPerActionType, purchaseActionTypes); ok {
 		m.CPA = &v
+	}
+	if v, ok := findAction(ri.Actions, landingPageViewTypes); ok {
+		n := int64(v)
+		m.LandingPageViews = &n
+	}
+	if v, ok := findAction(ri.Actions, addToCartTypes); ok {
+		n := int64(v)
+		m.AddToCart = &n
+	}
+	if v, ok := findAction(ri.Actions, initiateCheckoutTypes); ok {
+		n := int64(v)
+		m.InitiateCheckout = &n
 	}
 	return m
 }
 
-// pickAction devuelve el valor de compra de un array de actionValue, siguiendo
-// la prioridad de purchaseActionTypes. ok=false si no hay ninguna compra.
-func pickAction(list []actionValue) (float64, bool) {
-	for _, want := range purchaseActionTypes {
+// findAction devuelve el valor del primer action_type presente según la lista de
+// prioridad. ok=false si ninguno aparece.
+func findAction(list []actionValue, types []string) (float64, bool) {
+	for _, want := range types {
 		for _, av := range list {
 			if av.ActionType == want {
 				return atof(av.Value), true

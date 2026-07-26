@@ -9,7 +9,7 @@ import (
 )
 
 // NewServer construye el servidor MCP con las tools de lectura registradas.
-func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights, gab *app.GetAudienceBreakdown) *server.MCPServer {
+func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights, gab *app.GetAudienceBreakdown, gf *app.GetFunnel) *server.MCPServer {
 	s := server.NewMCPServer(
 		name,
 		version,
@@ -20,6 +20,7 @@ func NewServer(name, version string, lc *app.ListCampaigns, gi *app.GetInsights,
 	s.AddTool(campaignsTool(), campaignsHandler(lc))
 	s.AddTool(insightsTool(), insightsHandler(gi))
 	s.AddTool(audienceTool(), audienceHandler(gab))
+	s.AddTool(funnelTool(), funnelHandler(gf))
 
 	return s
 }

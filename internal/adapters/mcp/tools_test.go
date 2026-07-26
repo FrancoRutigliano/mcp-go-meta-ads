@@ -154,6 +154,54 @@ func TestAudienceHandler_InvalidDimension(t *testing.T) {
 	}
 }
 
+func TestFunnelHandler_Success(t *testing.T) {
+	fake := &fakeReader{insights: []domain.Insight{
+		{CampaignID: "1", CampaignName: "Ventas", Metrics: domain.Metrics{
+			Impressions: 10000, LinkClicks: 500,
+			LandingPageViews: pur(400), AddToCart: pur(50), InitiateCheckout: pur(20), Purchases: pur(8),
+		}},
+	}}
+	h := funnelHandler(app.NewGetFunnel(fake))
+
+	res, err := h(context.Background(), newRequest(nil))
+	if err != nil {
+		t.Fatalf("handler returned go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected success, got: %q", resultText(res))
+	}
+	if !strings.Contains(resultText(res), "Embudo") {
+		t.Errorf("unexpected funnel output: %q", resultText(res))
+	}
+}
+
+func TestToolBuilders_HaveExpectedNames(t *testing.T) {
+	cases := map[string]string{
+		"get_campaigns":          campaignsTool().Name,
+		"get_campaigns_insights": insightsTool().Name,
+		"get_audience_breakdown": audienceTool().Name,
+		"get_conversion_funnel":  funnelTool().Name,
+	}
+	for want, got := range cases {
+		if got != want {
+			t.Errorf("tool name = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestNewServer_BuildsWithAllUseCases(t *testing.T) {
+	fake := &fakeReader{}
+	srv := NewServer("test", "0.0.0",
+		app.NewListCampaigns(fake),
+		app.NewGetInsights(fake, th(), su()),
+		app.NewGetAudienceBreakdown(fake, th(), su()),
+		app.NewGetFunnel(fake),
+	)
+	if srv == nil {
+		t.Fatal("NewServer devolvió nil")
+	}
+}
+
 func TestInsightsHandler_MalformedDateRejected(t *testing.T) {
 	fake := &fakeReader{}
 	h := insightsHandler(app.NewGetInsights(fake, th(), su()))

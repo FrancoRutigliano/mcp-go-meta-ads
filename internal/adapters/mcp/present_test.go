@@ -119,6 +119,31 @@ func TestFormatInsights_NoConversionsNotZero(t *testing.T) {
 	}
 }
 
+func TestFormatFunnel_ShowsLeakAndHint(t *testing.T) {
+	applied := domain.DateRange{
+		Since: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
+	}
+	out := formatFunnel([]app.CampaignFunnel{
+		{
+			CampaignID: "1", CampaignName: "Ventas", AnyActivity: true, HasLeak: true,
+			LeakFrom: "Vistas de página", LeakTo: "Agregar al carrito", LeakPct: 93.3,
+			Steps: []app.FunnelStep{
+				{Name: "Impresiones", Count: 56648, Known: true},
+				{Name: "Clics de enlace", Count: 2016, Known: true},
+				{Name: "Vistas de página", Count: 1800, Known: true},
+				{Name: "Agregar al carrito", Count: 120, Known: true},
+			},
+		},
+	}, applied)
+
+	for _, want := range []string{"Embudo", "Ventas", "Mayor caída", "93.3%", "no agregan al carrito"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("funnel output missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 func TestFormatBreakdown_RendersSegments(t *testing.T) {
 	applied := domain.DateRange{
 		Since: time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),

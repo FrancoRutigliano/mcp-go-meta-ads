@@ -83,6 +83,71 @@ func formatBreakdown(br app.EvaluatedBreakdown, applied domain.DateRange) string
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// formatFunnel arma el embudo de conversión, mostrando la retención en cada
+// paso y resaltando dónde se cae (responde "¿por qué no vende?").
+func formatFunnel(funnels []app.CampaignFunnel, applied domain.DateRange) string {
+	period := periodES(applied)
+	if len(funnels) == 0 {
+		return fmt.Sprintf("No hubo actividad registrada en el período %s.", period)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Embudo de conversión %s:\n", period)
+	for _, f := range funnels {
+		fmt.Fprintf(&b, "• %s (id %s)\n", nameOr(f.CampaignName, f.CampaignID), f.CampaignID)
+		if !f.AnyActivity {
+			b.WriteString("   Sin actividad en el período.\n")
+			continue
+		}
+
+		var prevName string
+		var prevCount int64
+		for _, s := range f.Steps {
+			if !s.Known {
+				continue
+			}
+			if prevName == "" {
+				fmt.Fprintf(&b, "   %s: %d\n", s.Name, s.Count)
+			} else {
+				ret := 0.0
+				if prevCount > 0 {
+					ret = float64(s.Count) / float64(prevCount) * 100
+				}
+				fmt.Fprintf(&b, "   %s: %d (%.1f%% de %s)\n", s.Name, s.Count, ret, strings.ToLower(prevName))
+			}
+			prevName, prevCount = s.Name, s.Count
+		}
+
+		if f.HasLeak {
+			fmt.Fprintf(&b, "   🔴 Mayor caída: de \"%s\" a \"%s\" (se pierde %.1f%%).\n",
+				f.LeakFrom, f.LeakTo, f.LeakPct)
+			if hint := leakHint(f.LeakTo); hint != "" {
+				fmt.Fprintf(&b, "   → %s\n", hint)
+			}
+		}
+		if f.PixelGaps {
+			b.WriteString("   ℹ️ El pixel no registra algunos pasos intermedios (carrito/pago); el embudo puede estar incompleto.\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// leakHint traduce dónde se cae el embudo a una explicación accionable.
+func leakHint(leakTo string) string {
+	switch leakTo {
+	case "Vistas de página":
+		return "Hacen clic pero no llegan a la web: revisá velocidad de carga o que el enlace no esté roto."
+	case "Agregar al carrito":
+		return "Llegan a la web pero no agregan al carrito: el producto, la foto o el precio no enganchan."
+	case "Iniciar pago":
+		return "Agregan al carrito pero no arrancan el pago: puede ser el costo de envío o dudas antes de pagar."
+	case "Compras":
+		return "Arrancan el pago pero no compran: revisá el checkout, envío y medios de pago en Tienda Nube."
+	default:
+		return ""
+	}
+}
+
 // metricsReport renderiza el bloque de métricas de un conjunto, con íconos por
 // estado y "no calculable" cuando falta el dato (Principios VIII y IX).
 func metricsReport(m domain.Metrics, e app.Evaluation) string {

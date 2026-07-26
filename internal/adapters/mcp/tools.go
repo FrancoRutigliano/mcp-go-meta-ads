@@ -64,6 +64,30 @@ func insightsHandler(gi *app.GetInsights) server.ToolHandlerFunc {
 	}
 }
 
+// funnelHandler construye el handler de la tool get_conversion_funnel.
+func funnelHandler(uc *app.GetFunnel) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		campaignID := req.GetString("campaign_id", "")
+		since := req.GetString("since", "")
+		until := req.GetString("until", "")
+
+		rng, ok := parseOptionalRange(since, until)
+		if !ok {
+			return mcp.NewToolResultError(
+				"Indicá ambas fechas (desde y hasta) en formato AAAA-MM-DD, o ninguna para usar los últimos 30 días.",
+			), nil
+		}
+
+		funnels, applied, err := uc.Execute(ctx, campaignID, rng)
+		if err != nil {
+			slog.Error("get_conversion_funnel falló", "tool", "get_conversion_funnel",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatFunnel(funnels, applied)), nil
+	}
+}
+
 // audienceHandler construye el handler de la tool get_audience_breakdown.
 func audienceHandler(uc *app.GetAudienceBreakdown) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -137,6 +161,26 @@ func insightsTool() mcp.Tool {
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("campaign_id",
 			mcp.Description("ID de una campaña específica. Si se omite, devuelve todas las campañas de la cuenta."),
+		),
+		mcp.WithString("since",
+			mcp.Description("Fecha de inicio del período en formato AAAA-MM-DD. Opcional (junto con 'until')."),
+		),
+		mcp.WithString("until",
+			mcp.Description("Fecha de fin del período en formato AAAA-MM-DD. Opcional (junto con 'since')."),
+		),
+	)
+}
+
+// funnelTool define el esquema de la tool get_conversion_funnel.
+func funnelTool() mcp.Tool {
+	return mcp.NewTool("get_conversion_funnel",
+		mcp.WithDescription("Muestra el embudo de conversión (impresiones → clics → vistas de página → carrito → inicio de pago → compras) y resalta en qué paso se cae la gente. Sirve para responder \"¿por qué no vende?\". Si no se indica período, usa los últimos 30 días."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithString("campaign_id",
+			mcp.Description("ID de una campaña específica. Si se omite, arma el embudo a nivel de toda la cuenta."),
 		),
 		mcp.WithString("since",
 			mcp.Description("Fecha de inicio del período en formato AAAA-MM-DD. Opcional (junto con 'until')."),

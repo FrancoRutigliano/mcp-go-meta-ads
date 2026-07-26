@@ -52,9 +52,10 @@ func main() {
 	listCampaigns := app.NewListCampaigns(reader)
 	getInsights := app.NewGetInsights(reader, cfg.Thresholds, cfg.Sufficiency)
 	getAudienceBreakdown := app.NewGetAudienceBreakdown(reader, cfg.Thresholds, cfg.Sufficiency)
+	getFunnel := app.NewGetFunnel(reader)
 
 	// Adaptador de entrada: tools MCP.
-	mcpServer := mcpadapter.NewServer(serverName, serverVersion, listCampaigns, getInsights, getAudienceBreakdown)
+	mcpServer := mcpadapter.NewServer(serverName, serverVersion, listCampaigns, getInsights, getAudienceBreakdown, getFunnel)
 
 	// Transporte Streamable HTTP sobre $PORT (apto para contenedor/Railway).
 	httpServer := server.NewStreamableHTTPServer(mcpServer,

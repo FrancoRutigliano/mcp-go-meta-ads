@@ -59,6 +59,12 @@ type Metrics struct {
 	Revenue   *float64 // facturación atribuida (valor de las compras)
 	ROAS      *float64 // retorno sobre inversión publicitaria (directo de Meta)
 	CPA       *float64 // costo por compra
+
+	// Pasos intermedios del embudo (nullable: nil = el pixel no lo registra,
+	// distinto de 0 — Principio IX).
+	LandingPageViews *int64 // vistas de la página de destino
+	AddToCart        *int64 // agregar al carrito
+	InitiateCheckout *int64 // inicio de pago
 }
 
 // Insight es el rendimiento de una campaña en un período dado.

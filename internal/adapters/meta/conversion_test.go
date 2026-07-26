@@ -64,14 +64,50 @@ func TestParseInsights_NoConversions_NilPointers(t *testing.T) {
 	}
 }
 
-func TestPickAction_PrefersPurchaseOverOmni(t *testing.T) {
+func TestFindAction_PrefersPurchaseOverOmni(t *testing.T) {
 	list := []actionValue{
 		{ActionType: "omni_purchase", Value: "99"},
 		{ActionType: "purchase", Value: "12"},
 	}
-	v, ok := pickAction(list)
+	v, ok := findAction(list, purchaseActionTypes)
 	if !ok || v != 12 {
-		t.Errorf("pickAction priorizó mal: got %v ok=%v, want 12", v, ok)
+		t.Errorf("findAction priorizó mal: got %v ok=%v, want 12", v, ok)
+	}
+}
+
+func TestMetricsFrom_ParsesFunnelSteps(t *testing.T) {
+	body := []byte(`{"data":[{
+		"campaign_id":"1","impressions":"10000","inline_link_clicks":"500",
+		"actions":[
+			{"action_type":"landing_page_view","value":"450"},
+			{"action_type":"add_to_cart","value":"120"},
+			{"action_type":"initiate_checkout","value":"40"},
+			{"action_type":"purchase","value":"12"}
+		]
+	}]}`)
+	out, err := parseInsights(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	m := out[0].Metrics
+	if m.LandingPageViews == nil || *m.LandingPageViews != 450 {
+		t.Errorf("LandingPageViews = %v, want 450", m.LandingPageViews)
+	}
+	if m.AddToCart == nil || *m.AddToCart != 120 {
+		t.Errorf("AddToCart = %v, want 120", m.AddToCart)
+	}
+	if m.InitiateCheckout == nil || *m.InitiateCheckout != 40 {
+		t.Errorf("InitiateCheckout = %v, want 40", m.InitiateCheckout)
+	}
+}
+
+func TestMetricsFrom_FunnelStepsNilWhenPixelSilent(t *testing.T) {
+	body := []byte(`{"data":[{"campaign_id":"1","impressions":"10000","inline_link_clicks":"500",
+		"actions":[{"action_type":"link_click","value":"500"}]}]}`)
+	out, _ := parseInsights(body)
+	m := out[0].Metrics
+	if m.AddToCart != nil || m.InitiateCheckout != nil || m.LandingPageViews != nil {
+		t.Errorf("pasos no reportados por el pixel deben quedar nil: %+v", m)
 	}
 }
 
