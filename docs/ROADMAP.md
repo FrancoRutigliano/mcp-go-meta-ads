@@ -27,7 +27,9 @@ campañas de Meta Ads hablando en español.
 - ✅ **004 — Embudo de conversión** (`get_conversion_funnel`): impresiones → clic → vistas → carrito
   → inicio de pago → compras, resaltando dónde se cae + pista accionable. Pasos intermedios
   nullables (Principio IX). **Hecho — falta redeploy.**
-- **005 — Rendimiento por anuncio (creativo)**: qué anuncio/publicación funciona, no solo la campaña.
+- ✅ **005 — Rendimiento por anuncio (creativo)** (`get_ad_performance`): rendimiento por anuncio
+  (level=ad), evaluado y ordenado de mejor a peor por ROAS. Responde "¿qué anuncio funciona?".
+  **Hecho — falta redeploy.**
 - **006 — Ranking y comparación de períodos**: top ganadoras vs perdedoras; este verano vs anterior
   (estacionalidad).
 - **007 — Descubrimiento de públicos (lectura)**: nivel **ad set**, leer targeting actual, buscar
