@@ -145,6 +145,47 @@ func (c *Client) GetInsights(ctx context.Context, q domain.InsightQuery) ([]doma
 	return insights, nil
 }
 
+// GetAdInsights implementa ports.MetaReader. Devuelve el rendimiento por
+// anuncio (level=ad) para el período pedido.
+func (c *Client) GetAdInsights(ctx context.Context, q domain.AdQuery) ([]domain.AdInsight, error) {
+	const op = "meta.GetAdInsights"
+
+	if err := q.Range.Valid(); err != nil {
+		return nil, domain.NewError(domain.KindInvalidInput, op, err)
+	}
+
+	node := c.accountID
+	if q.CampaignID != "" {
+		node = q.CampaignID
+	}
+
+	timeRange, err := json.Marshal(map[string]string{
+		"since": q.Range.Since.Format(graphDateLayout),
+		"until": q.Range.Until.Format(graphDateLayout),
+	})
+	if err != nil {
+		return nil, domain.NewError(domain.KindUpstream, op, err)
+	}
+
+	params := url.Values{}
+	params.Set("level", "ad")
+	params.Set("fields", "ad_id,ad_name,"+insightFields)
+	params.Set("time_range", string(timeRange))
+	if q.Limit > 0 {
+		params.Set("limit", strconv.Itoa(q.Limit))
+	}
+
+	body, err := c.get(ctx, node+"/insights", params, op)
+	if err != nil {
+		return nil, err
+	}
+	ads, err := parseAdInsights(body)
+	if err != nil {
+		return nil, domain.NewError(domain.KindUpstream, op, fmt.Errorf("parse: %w", err))
+	}
+	return ads, nil
+}
+
 // GetAudienceBreakdown implementa ports.MetaReader. Segmenta el rendimiento por
 // la dimensión pedida usando el parámetro breakdowns de la Graph API.
 func (c *Client) GetAudienceBreakdown(ctx context.Context, q domain.AudienceQuery) (domain.AudienceBreakdown, error) {

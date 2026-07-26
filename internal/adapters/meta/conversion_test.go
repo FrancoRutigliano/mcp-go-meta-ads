@@ -111,6 +111,39 @@ func TestMetricsFrom_FunnelStepsNilWhenPixelSilent(t *testing.T) {
 	}
 }
 
+func TestGetAdInsights_HappyPath(t *testing.T) {
+	var gotPath, gotQuery string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"data":[
+			{"ad_id":"111","ad_name":"Piluso Rafia","campaign_name":"Ventas","spend":"5000",
+			 "purchase_roas":[{"action_type":"omni_purchase","value":"4.2"}]}
+		]}`))
+	})
+
+	rng := domain.DateRange{
+		Since: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
+	}
+	out, err := client.GetAdInsights(context.Background(), domain.AdQuery{CampaignID: "6960821349863", Range: rng, Limit: 25})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 1 || out[0].AdName != "Piluso Rafia" {
+		t.Fatalf("ad insights inesperados: %+v", out)
+	}
+	if out[0].Metrics.ROAS == nil || *out[0].Metrics.ROAS != 4.2 {
+		t.Errorf("ROAS del anuncio mal mapeado")
+	}
+	if !strings.Contains(gotPath, "/6960821349863/insights") {
+		t.Errorf("path = %q, want campaign insights", gotPath)
+	}
+	if !strings.Contains(gotQuery, "level=ad") {
+		t.Errorf("query debe incluir level=ad: %q", gotQuery)
+	}
+}
+
 func TestGetAudienceBreakdown_HappyPath(t *testing.T) {
 	var gotQuery string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,7 @@ type fakeReader struct {
 	campaigns []domain.Campaign
 	insights  []domain.Insight
 	breakdown domain.AudienceBreakdown
+	ads       []domain.AdInsight
 	err       error
 }
 
@@ -27,6 +28,9 @@ func (f *fakeReader) GetInsights(context.Context, domain.InsightQuery) ([]domain
 }
 func (f *fakeReader) GetAudienceBreakdown(context.Context, domain.AudienceQuery) (domain.AudienceBreakdown, error) {
 	return f.breakdown, f.err
+}
+func (f *fakeReader) GetAdInsights(context.Context, domain.AdQuery) ([]domain.AdInsight, error) {
+	return f.ads, f.err
 }
 
 func th() domain.Thresholds        { return domain.DefaultThresholds() }
@@ -175,12 +179,32 @@ func TestFunnelHandler_Success(t *testing.T) {
 	}
 }
 
+func TestAdPerformanceHandler_Success(t *testing.T) {
+	fake := &fakeReader{ads: []domain.AdInsight{
+		{AdID: "a1", AdName: "Piluso Rafia", CampaignName: "Ventas", Metrics: domain.Metrics{Spend: 1000, ROAS: roas(5.0)}},
+	}}
+	h := adPerformanceHandler(app.NewGetAdPerformance(fake, th(), su()))
+
+	res, err := h(context.Background(), newRequest(map[string]any{"campaign_id": "c1"}))
+	if err != nil {
+		t.Fatalf("handler returned go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected success, got: %q", resultText(res))
+	}
+	out := resultText(res)
+	if !strings.Contains(out, "Piluso Rafia") || !strings.Contains(out, "Ventas") {
+		t.Errorf("ad performance output inesperado: %q", out)
+	}
+}
+
 func TestToolBuilders_HaveExpectedNames(t *testing.T) {
 	cases := map[string]string{
 		"get_campaigns":          campaignsTool().Name,
 		"get_campaigns_insights": insightsTool().Name,
 		"get_audience_breakdown": audienceTool().Name,
 		"get_conversion_funnel":  funnelTool().Name,
+		"get_ad_performance":     adPerformanceTool().Name,
 	}
 	for want, got := range cases {
 		if got != want {
@@ -196,6 +220,7 @@ func TestNewServer_BuildsWithAllUseCases(t *testing.T) {
 		app.NewGetInsights(fake, th(), su()),
 		app.NewGetAudienceBreakdown(fake, th(), su()),
 		app.NewGetFunnel(fake),
+		app.NewGetAdPerformance(fake, th(), su()),
 	)
 	if srv == nil {
 		t.Fatal("NewServer devolvió nil")

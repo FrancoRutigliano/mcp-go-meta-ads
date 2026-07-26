@@ -64,6 +64,31 @@ func insightsHandler(gi *app.GetInsights) server.ToolHandlerFunc {
 	}
 }
 
+// adPerformanceHandler construye el handler de la tool get_ad_performance.
+func adPerformanceHandler(uc *app.GetAdPerformance) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		campaignID := req.GetString("campaign_id", "")
+		limit := req.GetInt("limit", 0)
+		since := req.GetString("since", "")
+		until := req.GetString("until", "")
+
+		rng, ok := parseOptionalRange(since, until)
+		if !ok {
+			return mcp.NewToolResultError(
+				"Indicá ambas fechas (desde y hasta) en formato AAAA-MM-DD, o ninguna para usar los últimos 30 días.",
+			), nil
+		}
+
+		reports, applied, err := uc.Execute(ctx, campaignID, rng, limit)
+		if err != nil {
+			slog.Error("get_ad_performance falló", "tool", "get_ad_performance",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatAdPerformance(reports, applied)), nil
+	}
+}
+
 // funnelHandler construye el handler de la tool get_conversion_funnel.
 func funnelHandler(uc *app.GetFunnel) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -161,6 +186,29 @@ func insightsTool() mcp.Tool {
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("campaign_id",
 			mcp.Description("ID de una campaña específica. Si se omite, devuelve todas las campañas de la cuenta."),
+		),
+		mcp.WithString("since",
+			mcp.Description("Fecha de inicio del período en formato AAAA-MM-DD. Opcional (junto con 'until')."),
+		),
+		mcp.WithString("until",
+			mcp.Description("Fecha de fin del período en formato AAAA-MM-DD. Opcional (junto con 'since')."),
+		),
+	)
+}
+
+// adPerformanceTool define el esquema de la tool get_ad_performance.
+func adPerformanceTool() mcp.Tool {
+	return mcp.NewTool("get_ad_performance",
+		mcp.WithDescription("Lista el rendimiento por anuncio (creativo), ordenado de mejor a peor por ROAS, con ROAS, CPA, compras, facturación, CTR de enlace y frecuencia. Sirve para ver qué anuncio funciona y cuál no. Si no se indica período, usa los últimos 30 días."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithString("campaign_id",
+			mcp.Description("ID de una campaña específica. Si se omite, lista anuncios de toda la cuenta."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Cantidad máxima de anuncios a devolver. Por defecto 25."),
 		),
 		mcp.WithString("since",
 			mcp.Description("Fecha de inicio del período en formato AAAA-MM-DD. Opcional (junto con 'until')."),

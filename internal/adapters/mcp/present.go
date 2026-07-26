@@ -83,6 +83,28 @@ func formatBreakdown(br app.EvaluatedBreakdown, applied domain.DateRange) string
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// formatAdPerformance arma el ranking de anuncios (mejor a peor), indicando el
+// período aplicado y el estado de cada métrica vs umbral.
+func formatAdPerformance(reports []app.AdReport, applied domain.DateRange) string {
+	period := periodES(applied)
+	if len(reports) == 0 {
+		return fmt.Sprintf("No hubo anuncios con actividad en el período %s.", period)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Rendimiento por anuncio %s (de mejor a peor):\n", period)
+	for _, r := range reports {
+		name := nameOr(r.Ad.AdName, r.Ad.AdID)
+		if strings.TrimSpace(r.Ad.CampaignName) != "" {
+			fmt.Fprintf(&b, "• %s — campaña: %s\n", name, r.Ad.CampaignName)
+		} else {
+			fmt.Fprintf(&b, "• %s\n", name)
+		}
+		b.WriteString(metricsReport(r.Ad.Metrics, r.Eval))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // formatFunnel arma el embudo de conversión, mostrando la retención en cada
 // paso y resaltando dónde se cae (responde "¿por qué no vende?").
 func formatFunnel(funnels []app.CampaignFunnel, applied domain.DateRange) string {

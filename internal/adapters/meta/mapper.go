@@ -28,6 +28,8 @@ type actionValue struct {
 }
 
 type rawInsight struct {
+	AdID         string `json:"ad_id"`
+	AdName       string `json:"ad_name"`
 	CampaignID   string `json:"campaign_id"`
 	CampaignName string `json:"campaign_name"`
 	Spend        string `json:"spend"`
@@ -113,6 +115,29 @@ func parseInsights(body []byte) ([]domain.Insight, error) {
 	out := make([]domain.Insight, 0, len(env.Data))
 	for _, ri := range env.Data {
 		out = append(out, domain.Insight{
+			CampaignID:   ri.CampaignID,
+			CampaignName: ri.CampaignName,
+			Range: domain.DateRange{
+				Since: parseDate(ri.DateStart),
+				Until: parseDate(ri.DateStop),
+			},
+			Metrics: metricsFrom(ri),
+		})
+	}
+	return out, nil
+}
+
+// parseAdInsights convierte el JSON de insights a nivel anuncio en entidades.
+func parseAdInsights(body []byte) ([]domain.AdInsight, error) {
+	var env dataEnvelope[rawInsight]
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, err
+	}
+	out := make([]domain.AdInsight, 0, len(env.Data))
+	for _, ri := range env.Data {
+		out = append(out, domain.AdInsight{
+			AdID:         ri.AdID,
+			AdName:       ri.AdName,
 			CampaignID:   ri.CampaignID,
 			CampaignName: ri.CampaignName,
 			Range: domain.DateRange{

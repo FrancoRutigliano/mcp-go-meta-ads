@@ -55,9 +55,10 @@ func main() {
 	getInsights := app.NewGetInsights(reader, cfg.Thresholds, cfg.Sufficiency)
 	getAudienceBreakdown := app.NewGetAudienceBreakdown(reader, cfg.Thresholds, cfg.Sufficiency)
 	getFunnel := app.NewGetFunnel(reader)
+	getAdPerformance := app.NewGetAdPerformance(reader, cfg.Thresholds, cfg.Sufficiency)
 
 	// Adaptador de entrada: tools MCP.
-	mcpServer := mcpadapter.NewServer(serverName, serverVersion, listCampaigns, getInsights, getAudienceBreakdown, getFunnel)
+	mcpServer := mcpadapter.NewServer(serverName, serverVersion, listCampaigns, getInsights, getAudienceBreakdown, getFunnel, getAdPerformance)
 
 	// Transporte Streamable HTTP sobre $PORT (apto para contenedor/Railway).
 	streamable := server.NewStreamableHTTPServer(mcpServer,

@@ -15,10 +15,12 @@ type fakeReader struct {
 	campaigns    []domain.Campaign
 	insights     []domain.Insight
 	breakdown    domain.AudienceBreakdown
+	ads          []domain.AdInsight
 	err          error
 	gotCampaignQ domain.CampaignQuery
 	gotInsightQ  domain.InsightQuery
 	gotAudienceQ domain.AudienceQuery
+	gotAdQ       domain.AdQuery
 	called       bool
 }
 
@@ -38,6 +40,12 @@ func (f *fakeReader) GetAudienceBreakdown(_ context.Context, q domain.AudienceQu
 	f.called = true
 	f.gotAudienceQ = q
 	return f.breakdown, f.err
+}
+
+func (f *fakeReader) GetAdInsights(_ context.Context, q domain.AdQuery) ([]domain.AdInsight, error) {
+	f.called = true
+	f.gotAdQ = q
+	return f.ads, f.err
 }
 
 // helpers de umbrales/suficiencia por defecto para construir casos de uso.

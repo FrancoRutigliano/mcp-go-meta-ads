@@ -25,4 +25,8 @@ type MetaReader interface {
 	// GetAudienceBreakdown devuelve el rendimiento segmentado por una dimensión
 	// (edad, género, región, plataforma, posición) para el período pedido.
 	GetAudienceBreakdown(ctx context.Context, q domain.AudienceQuery) (domain.AudienceBreakdown, error)
+
+	// GetAdInsights devuelve el rendimiento por anuncio (creativo) para el
+	// período pedido.
+	GetAdInsights(ctx context.Context, q domain.AdQuery) ([]domain.AdInsight, error)
 }
