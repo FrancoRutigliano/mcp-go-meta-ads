@@ -26,7 +26,7 @@ import (
 
 const (
 	serverName    = "meta-ads-manager"
-	serverVersion = "0.1.0"
+	serverVersion = "3.0.0"
 )
 
 func main() {
