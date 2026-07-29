@@ -19,6 +19,29 @@ const (
 	KindUpstream     Kind = "upstream" // fallo de la fuente de datos (Meta)
 )
 
+// Sentinelas del dominio para las condiciones de negocio que la capa de
+// presentación necesita distinguir con errors.Is para dar un mensaje preciso
+// (Constitución, Principios V y VII). Van envueltos en un *Error con su Kind,
+// de modo que KindOf sigue funcionando.
+var (
+	// ErrNoBudgetChange: no se pidió ni monto absoluto ni ajuste relativo.
+	ErrNoBudgetChange = errors.New("no se indicó ningún cambio de presupuesto")
+	// ErrBothAmountAndPercent: se pidieron las dos formas a la vez.
+	ErrBothAmountAndPercent = errors.New("se indicaron monto y porcentaje a la vez")
+	// ErrNoBudgetToScale: se pidió un ajuste relativo sin presupuesto base.
+	ErrNoBudgetToScale = errors.New("no hay presupuesto vigente sobre el cual calcular el ajuste")
+	// ErrBudgetUnchanged: el monto pedido es igual al vigente.
+	ErrBudgetUnchanged = errors.New("el presupuesto pedido es igual al actual")
+	// ErrBudgetDrifted: el presupuesto cambió entre el propose y el confirm.
+	ErrBudgetDrifted = errors.New("el presupuesto cambió desde que se armó la propuesta")
+	// ErrBudgetLevelMismatch: se pidió escribir en el nivel equivocado.
+	ErrBudgetLevelMismatch = errors.New("el presupuesto se administra en otro nivel")
+	// ErrNoAdSets: la campaña no tiene conjuntos de anuncios.
+	ErrNoAdSets = errors.New("la campaña no tiene conjuntos de anuncios")
+	// ErrBudgetBelowMinimum: Meta rechazó el monto por ser menor a su mínimo.
+	ErrBudgetBelowMinimum = errors.New("el presupuesto es menor al mínimo que permite Meta")
+)
+
 // Error es el error semántico del dominio. Conserva la causa técnica (para
 // loguear del lado del servidor) separada de la clasificación que usa la capa
 // de presentación para construir el mensaje en español.
