@@ -162,3 +162,109 @@ func TestFormatBreakdown_RendersSegments(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatMoney(t *testing.T) {
+	tests := []struct {
+		name  string
+		pesos float64
+		want  string
+	}{
+		{name: "miles con separador local", pesos: 5000, want: "$5.000"},
+		{name: "millones", pesos: 1250000, want: "$1.250.000"},
+		{name: "menor a mil", pesos: 750, want: "$750"},
+		{name: "cero", pesos: 0, want: "$0"},
+		{name: "redondea a peso entero", pesos: 1999.6, want: "$2.000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatMoney(domain.MoneyFromPesos(tt.pesos))
+			if got != tt.want {
+				t.Errorf("formatMoney(%v) = %q, esperaba %q", tt.pesos, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMessageForError_GuardrailFactor(t *testing.T) {
+	g := domain.Guardrails{MaxIncreaseFactor: 3, MaxDailyBudget: domain.MoneyFromPesos(25000)}
+	err := g.Check(domain.MoneyFromPesos(1000), domain.MoneyFromPesos(9000), domain.BudgetDaily)
+
+	msg := messageForError(err)
+
+	// Debe decir cuál es el máximo real, no un mensaje genérico de "datos inválidos".
+	if !strings.Contains(msg, "$3.000") {
+		t.Errorf("el mensaje debería incluir el máximo admitido ($3.000), vino: %q", msg)
+	}
+	if strings.Contains(msg, "GuardrailError") || strings.Contains(msg, "domain.") {
+		t.Errorf("el mensaje no debe filtrar detalle técnico, vino: %q", msg)
+	}
+}
+
+func TestMessageForError_GuardrailCeiling(t *testing.T) {
+	g := domain.Guardrails{MaxIncreaseFactor: 10, MaxDailyBudget: domain.MoneyFromPesos(25000)}
+	err := g.Check(domain.MoneyFromPesos(20000), domain.MoneyFromPesos(30000), domain.BudgetDaily)
+
+	msg := messageForError(err)
+
+	if !strings.Contains(msg, "$25.000") {
+		t.Errorf("el mensaje debería incluir el techo diario ($25.000), vino: %q", msg)
+	}
+}
+
+func TestMessageForError_BudgetSentinels(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		contains string
+	}{
+		{
+			name:     "nivel equivocado",
+			err:      domain.NewError(domain.KindInvalidInput, "op", domain.ErrBudgetLevelMismatch),
+			contains: "conjunto",
+		},
+		{
+			name:     "sin base para el porcentaje",
+			err:      domain.NewError(domain.KindInvalidInput, "op", domain.ErrNoBudgetToScale),
+			contains: "porcentaje",
+		},
+		{
+			name:     "monto y porcentaje a la vez",
+			err:      domain.NewError(domain.KindInvalidInput, "op", domain.ErrBothAmountAndPercent),
+			contains: "una sola",
+		},
+		{
+			name:     "sin cambio",
+			err:      domain.NewError(domain.KindInvalidInput, "op", domain.ErrBudgetUnchanged),
+			contains: "ya tiene",
+		},
+		{
+			name:     "base cambiada",
+			err:      domain.NewError(domain.KindInvalidInput, "op", domain.ErrBudgetDrifted),
+			contains: "cambió",
+		},
+		{
+			name:     "sin conjuntos",
+			err:      domain.NewError(domain.KindNotFound, "op", domain.ErrNoAdSets),
+			contains: "conjuntos de anuncios",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := messageForError(tt.err)
+			if !strings.Contains(strings.ToLower(msg), strings.ToLower(tt.contains)) {
+				t.Errorf("mensaje = %q, esperaba que contuviera %q", msg, tt.contains)
+			}
+		})
+	}
+}
+
+func TestMessageForError_FallsBackToKind(t *testing.T) {
+	// Un error sin sentinela conocida sigue cayendo al switch por Kind.
+	err := domain.NewError(domain.KindRateLimited, "op", nil)
+
+	if msg := messageForError(err); !strings.Contains(msg, "limitando") {
+		t.Errorf("mensaje = %q, esperaba el mensaje de rate limiting", msg)
+	}
+}

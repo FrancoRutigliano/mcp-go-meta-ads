@@ -81,6 +81,63 @@ func proposeCampaignStatusHandler(uc *app.ProposeCampaignStatus) server.ToolHand
 	}
 }
 
+// budgetsHandler construye el handler de la tool get_budgets (sólo lectura).
+func budgetsHandler(uc *app.GetBudgets) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		ov, err := uc.Execute(ctx, req.GetString("campaign_id", ""))
+		if err != nil {
+			slog.Error("get_budgets falló", "tool", "get_budgets",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatBudgets(ov)), nil
+	}
+}
+
+// proposeBudgetHandler construye el handler de propose_budget. Es el paso SIN
+// efecto: calcula el cambio de presupuesto y devuelve un id para confirmarlo.
+func proposeBudgetHandler(uc *app.ProposeBudget) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		change, ok := parseBudgetChange(req)
+		if !ok {
+			return mcp.NewToolResultError(
+				"Indicá una sola cosa: el nuevo presupuesto en pesos (amount_ars) o el ajuste en porcentaje (percent_change).",
+			), nil
+		}
+
+		bp, err := uc.Execute(ctx, app.BudgetRequest{
+			CampaignID: req.GetString("campaign_id", ""),
+			AdSetID:    req.GetString("adset_id", ""),
+			Change:     change,
+		})
+		if err != nil {
+			slog.Error("propose_budget falló", "tool", "propose_budget",
+				"kind", domain.KindOf(err), "error", err.Error())
+			return mcp.NewToolResultError(messageForError(err)), nil
+		}
+		return mcp.NewToolResultText(formatBudgetProposal(bp)), nil
+	}
+}
+
+// parseBudgetChange traduce los parámetros de la tool a un cambio del dominio.
+// Devuelve ok=false sólo si no se indicó ninguna de las dos formas; la
+// combinación inválida se deja pasar para que el dominio la rechace con su
+// mensaje propio.
+func parseBudgetChange(req mcp.CallToolRequest) (domain.BudgetChange, bool) {
+	var change domain.BudgetChange
+
+	if raw := req.GetFloat("amount_ars", 0); raw != 0 {
+		m := domain.MoneyFromPesos(raw)
+		change.Amount = &m
+	}
+	if raw := req.GetFloat("percent_change", 0); raw != 0 {
+		p := raw
+		change.Percent = &p
+	}
+
+	return change, change.Amount != nil || change.Percent != nil
+}
+
 // confirmActionHandler construye el handler de confirm_action. Es el ÚNICO paso
 // de escritura, y sólo aplica propuestas existentes (Principio II).
 func confirmActionHandler(uc *app.ConfirmProposal) server.ToolHandlerFunc {
@@ -244,6 +301,44 @@ func proposeCampaignStatusTool() mcp.Tool {
 			mcp.Required(),
 			mcp.Description("Acción a proponer: 'pause' (pausar) o 'activate' (activar)."),
 			mcp.Enum("pause", "activate"),
+		),
+	)
+}
+
+// budgetsTool define el esquema de la tool get_budgets.
+func budgetsTool() mcp.Tool {
+	return mcp.NewTool("get_budgets",
+		mcp.WithDescription("Muestra el presupuesto vigente de una campaña: si lo administra la campaña o si está repartido entre sus conjuntos de anuncios, cuánto tiene cada uno y cuánto gasto diario hay comprometido. No cambia nada. Conviene usarla antes de propose_budget para saber dónde aplicar el cambio."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithString("campaign_id",
+			mcp.Required(),
+			mcp.Description("ID de la campaña a consultar."),
+		),
+	)
+}
+
+// proposeBudgetTool define el esquema de propose_budget. Como propose_*, no
+// tiene efecto: sólo calcula el cambio.
+func proposeBudgetTool() mcp.Tool {
+	return mcp.NewTool("propose_budget",
+		mcp.WithDescription("Paso 1 de 2 (SIN efecto): propone cambiar el presupuesto de una campaña o de un conjunto de anuncios, y devuelve un proposal_id. NO cambia nada en Meta; para aplicarlo hay que confirmar con la tool confirm_action. Para mover plata de una campaña a otra, usar esta tool dos veces (una para bajar, otra para subir), cada una con su confirmación."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("campaign_id",
+			mcp.Required(),
+			mcp.Description("ID de la campaña. Siempre obligatorio, incluso cuando se ajusta un conjunto de anuncios."),
+		),
+		mcp.WithString("adset_id",
+			mcp.Description("ID del conjunto de anuncios a ajustar. Sólo si el presupuesto se administra a nivel conjunto; si se omite, se ajusta el presupuesto de la campaña."),
+		),
+		mcp.WithNumber("amount_ars",
+			mcp.Description("Nuevo presupuesto en pesos argentinos (ej: 5000 para $5.000 por día). Excluyente con percent_change."),
+		),
+		mcp.WithNumber("percent_change",
+			mcp.Description("Ajuste porcentual sobre el presupuesto actual: 30 sube un 30%, -50 lo baja a la mitad. Excluyente con amount_ars."),
 		),
 	)
 }

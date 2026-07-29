@@ -3,6 +3,7 @@ package meta
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mashats/meta-ads-manager/internal/domain"
@@ -18,6 +19,106 @@ type rawCampaign struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	Objective string `json:"objective"`
+
+	// Presupuesto a nivel campaña (feature 010). Vienen como string en unidades
+	// menores. Ausentes o en "0" significan que la plata se administra en los
+	// conjuntos de anuncios.
+	DailyBudget    string `json:"daily_budget"`
+	LifetimeBudget string `json:"lifetime_budget"`
+}
+
+// toCampaign convierte la representación cruda en la entidad del dominio,
+// resolviendo dónde vive el presupuesto.
+func (rc rawCampaign) toCampaign() (domain.Campaign, error) {
+	budget, err := parseBudget(rc.DailyBudget, rc.LifetimeBudget)
+	if err != nil {
+		return domain.Campaign{}, err
+	}
+	return domain.Campaign{
+		ID:        rc.ID,
+		Name:      rc.Name,
+		Status:    domain.CampaignStatus(rc.Status),
+		Objective: rc.Objective,
+		Budget:    budget,
+	}, nil
+}
+
+type rawAdSet struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	CampaignID     string `json:"campaign_id"`
+	DailyBudget    string `json:"daily_budget"`
+	LifetimeBudget string `json:"lifetime_budget"`
+}
+
+func (ra rawAdSet) toAdSet() (domain.AdSet, error) {
+	budget, err := parseBudget(ra.DailyBudget, ra.LifetimeBudget)
+	if err != nil {
+		return domain.AdSet{}, err
+	}
+	return domain.AdSet{
+		ID:         ra.ID,
+		Name:       ra.Name,
+		Status:     domain.AdSetStatus(ra.Status),
+		CampaignID: ra.CampaignID,
+		Budget:     budget,
+	}, nil
+}
+
+// parseAdSets convierte el JSON de conjuntos de anuncios en entidades del dominio.
+func parseAdSets(body []byte) ([]domain.AdSet, error) {
+	var env dataEnvelope[rawAdSet]
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, err
+	}
+	out := make([]domain.AdSet, 0, len(env.Data))
+	for _, ra := range env.Data {
+		set, err := ra.toAdSet()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, set)
+	}
+	return out, nil
+}
+
+// parseAdSet convierte el JSON de un conjunto puntual (objeto suelto).
+func parseAdSet(body []byte) (domain.AdSet, error) {
+	var ra rawAdSet
+	if err := json.Unmarshal(body, &ra); err != nil {
+		return domain.AdSet{}, err
+	}
+	return ra.toAdSet()
+}
+
+// parseBudget interpreta el par de campos de presupuesto de Meta. Devuelve nil
+// cuando ninguno tiene valor útil: eso significa que el presupuesto se
+// administra en otro nivel, no que sea cero.
+//
+// Un monto presente pero ilegible es un error, nunca un cero silencioso
+// (Constitución, Principio V).
+func parseBudget(daily, lifetime string) (*domain.Budget, error) {
+	for _, candidate := range []struct {
+		raw string
+		typ domain.BudgetType
+	}{
+		{raw: daily, typ: domain.BudgetDaily},
+		{raw: lifetime, typ: domain.BudgetLifetime},
+	} {
+		if strings.TrimSpace(candidate.raw) == "" {
+			continue
+		}
+		amount, err := domain.ParseMoneyMinorUnits(candidate.raw)
+		if err != nil {
+			return nil, err
+		}
+		if amount.IsZero() {
+			continue
+		}
+		return &domain.Budget{Type: candidate.typ, Amount: amount}, nil
+	}
+	return nil, nil
 }
 
 // actionValue es el objeto que Meta usa dentro de arrays como actions,
@@ -96,12 +197,11 @@ func parseCampaigns(body []byte) ([]domain.Campaign, error) {
 	}
 	out := make([]domain.Campaign, 0, len(env.Data))
 	for _, rc := range env.Data {
-		out = append(out, domain.Campaign{
-			ID:        rc.ID,
-			Name:      rc.Name,
-			Status:    domain.CampaignStatus(rc.Status),
-			Objective: rc.Objective,
-		})
+		c, err := rc.toCampaign()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
@@ -113,12 +213,7 @@ func parseCampaign(body []byte) (domain.Campaign, error) {
 	if err := json.Unmarshal(body, &rc); err != nil {
 		return domain.Campaign{}, err
 	}
-	return domain.Campaign{
-		ID:        rc.ID,
-		Name:      rc.Name,
-		Status:    domain.CampaignStatus(rc.Status),
-		Objective: rc.Objective,
-	}, nil
+	return rc.toCampaign()
 }
 
 // parseInsights convierte el JSON de insights (nivel campaña) en entidades.

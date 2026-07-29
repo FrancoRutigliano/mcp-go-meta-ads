@@ -57,12 +57,14 @@ func main() {
 	getAudienceBreakdown := app.NewGetAudienceBreakdown(reader, cfg.Thresholds, cfg.Sufficiency)
 	getFunnel := app.NewGetFunnel(reader)
 	getAdPerformance := app.NewGetAdPerformance(reader, cfg.Thresholds, cfg.Sufficiency)
+	getBudgets := app.NewGetBudgets(reader)
 
 	// Escritura: store de propuestas en memoria + par propose/confirm. El mismo
 	// cliente Meta implementa lectura y escritura; el confirm audita vía slog.
 	proposals := memstore.New()
 	proposeStatus := app.NewProposeCampaignStatus(reader, proposals)
-	confirm := app.NewConfirmProposal(proposals, reader, slog.Default())
+	proposeBudget := app.NewProposeBudget(reader, proposals, cfg.Guardrails, cfg.Thresholds, cfg.Sufficiency)
+	confirm := app.NewConfirmProposal(proposals, reader, reader, slog.Default())
 
 	// Adaptador de entrada: tools MCP.
 	mcpServer := mcpadapter.NewServer(serverName, serverVersion, mcpadapter.Deps{
@@ -71,7 +73,9 @@ func main() {
 		Audience:      getAudienceBreakdown,
 		Funnel:        getFunnel,
 		AdPerformance: getAdPerformance,
+		Budgets:       getBudgets,
 		ProposeStatus: proposeStatus,
+		ProposeBudget: proposeBudget,
 		Confirm:       confirm,
 	})
 

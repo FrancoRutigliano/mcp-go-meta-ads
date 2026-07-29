@@ -2,3 +2,13 @@
 .claude
 /bin
 .specify/templates
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# Universal
+.DS_Store
+*.tmp
+*.swp

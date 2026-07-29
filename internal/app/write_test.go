@@ -17,6 +17,7 @@ type fakeWriter struct {
 	calls     int
 	gotID     string
 	gotStatus domain.CampaignStatus
+	gotBudget domain.Budget
 	err       error
 }
 
@@ -24,6 +25,20 @@ func (w *fakeWriter) UpdateCampaignStatus(_ context.Context, id string, s domain
 	w.calls++
 	w.gotID = id
 	w.gotStatus = s
+	return w.err
+}
+
+func (w *fakeWriter) UpdateAdSetBudget(_ context.Context, id string, b domain.Budget) error {
+	w.calls++
+	w.gotID = id
+	w.gotBudget = b
+	return w.err
+}
+
+func (w *fakeWriter) UpdateCampaignBudget(_ context.Context, id string, b domain.Budget) error {
+	w.calls++
+	w.gotID = id
+	w.gotBudget = b
 	return w.err
 }
 
@@ -59,7 +74,7 @@ func TestConfirmProposal_AppliesAndAudits(t *testing.T) {
 	writer := &fakeWriter{}
 	var buf bytes.Buffer
 	audit := slog.New(slog.NewTextHandler(&buf, nil))
-	uc := NewConfirmProposal(store, writer, audit)
+	uc := NewConfirmProposal(store, &fakeReader{}, writer, audit)
 
 	now := time.Now()
 	p := domain.Proposal{
@@ -91,7 +106,7 @@ func TestConfirmProposal_AppliesAndAudits(t *testing.T) {
 
 // Principio II: no se puede confirmar algo que no fue propuesto.
 func TestConfirmProposal_UnknownIDRejected(t *testing.T) {
-	uc := NewConfirmProposal(memstore.New(), &fakeWriter{}, slog.Default())
+	uc := NewConfirmProposal(memstore.New(), &fakeReader{}, &fakeWriter{}, slog.Default())
 	_, err := uc.Execute(context.Background(), "prop_inventado", "x")
 	if domain.KindOf(err) != domain.KindNotFound {
 		t.Errorf("id inexistente debe ser not_found, got %v", err)
@@ -102,7 +117,7 @@ func TestConfirmProposal_ExpiredRejected(t *testing.T) {
 	store := memstore.New()
 	store.Save(domain.Proposal{ID: "prop_v", Kind: domain.ProposalCampaignStatus, ExpiresAt: time.Now().Add(-time.Minute)})
 	writer := &fakeWriter{}
-	uc := NewConfirmProposal(store, writer, slog.Default())
+	uc := NewConfirmProposal(store, &fakeReader{}, writer, slog.Default())
 
 	_, err := uc.Execute(context.Background(), "prop_v", "x")
 	if domain.KindOf(err) != domain.KindInvalidInput {
@@ -120,7 +135,7 @@ func TestConfirmProposal_KeepsProposalOnWriteFailure(t *testing.T) {
 		After: "PAUSED", ExpiresAt: time.Now().Add(5 * time.Minute),
 	})
 	writer := &fakeWriter{err: domain.NewError(domain.KindUnauthorized, "meta", errors.New("solo lectura"))}
-	uc := NewConfirmProposal(store, writer, slog.Default())
+	uc := NewConfirmProposal(store, &fakeReader{}, writer, slog.Default())
 
 	_, err := uc.Execute(context.Background(), "prop_e", "x")
 	if domain.KindOf(err) != domain.KindUnauthorized {
@@ -128,5 +143,208 @@ func TestConfirmProposal_KeepsProposalOnWriteFailure(t *testing.T) {
 	}
 	if _, ok := store.Get("prop_e"); !ok {
 		t.Error("si falla la escritura, la propuesta NO debe consumirse (para reintentar)")
+	}
+}
+
+// budgetProposal arma una propuesta de presupuesto vigente sobre una campaña.
+func budgetProposal(id string, before, after float64) domain.Proposal {
+	return domain.Proposal{
+		ID:           id,
+		Kind:         domain.ProposalBudget,
+		CampaignID:   "c1",
+		CampaignName: "Ventas",
+		Level:        domain.LevelCampaign,
+		EntityID:     "c1",
+		EntityName:   "Ventas",
+		Field:        "presupuesto",
+		Before:       pesosText(domain.MoneyFromPesos(before)),
+		After:        pesosText(domain.MoneyFromPesos(after)),
+		Budget: &domain.BudgetDelta{
+			Type:   domain.BudgetDaily,
+			Before: domain.MoneyFromPesos(before),
+			After:  domain.MoneyFromPesos(after),
+		},
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+}
+
+func TestConfirmProposal_AppliesBudgetAndAudits(t *testing.T) {
+	store := memstore.New()
+	store.Save(budgetProposal("prop_b", 3000, 5000))
+	writer := &fakeWriter{}
+	reader := &fakeReader{campaign: campaignWithBudget(3000)} // la base no cambió
+	var buf bytes.Buffer
+	audit := slog.New(slog.NewTextHandler(&buf, nil))
+	uc := NewConfirmProposal(store, reader, writer, audit)
+
+	_, err := uc.Execute(context.Background(), "prop_b", "Mariana")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if writer.calls != 1 {
+		t.Fatalf("esperaba 1 escritura, hubo %d", writer.calls)
+	}
+	if writer.gotID != "c1" {
+		t.Errorf("escribió sobre %q, esperaba c1", writer.gotID)
+	}
+	if writer.gotBudget.Amount.Pesos() != 5000 || writer.gotBudget.Type != domain.BudgetDaily {
+		t.Errorf("presupuesto aplicado = %+v, esperaba 5000 diario", writer.gotBudget)
+	}
+	if _, ok := store.Get("prop_b"); ok {
+		t.Error("la propuesta debe consumirse (un solo uso)")
+	}
+
+	log := buf.String()
+	for _, want := range []string{"escritura confirmada", "nivel=campaign", "entidad_id=c1", "confirmado_por=Mariana"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("auditoría sin %q en: %s", want, log)
+		}
+	}
+}
+
+func TestConfirmProposal_RejectsDriftedBudget(t *testing.T) {
+	// Alguien cambió el presupuesto desde el Business Manager entre el propose y
+	// el confirm: la base ya no es la que se le mostró al usuario (FR-030).
+	store := memstore.New()
+	store.Save(budgetProposal("prop_d", 3000, 5000))
+	writer := &fakeWriter{}
+	reader := &fakeReader{campaign: campaignWithBudget(4200)} // derivó
+	uc := NewConfirmProposal(store, reader, writer, slog.Default())
+
+	_, err := uc.Execute(context.Background(), "prop_d", "Mariana")
+
+	if !errors.Is(err, domain.ErrBudgetDrifted) {
+		t.Errorf("error = %v, esperaba que envolviera ErrBudgetDrifted", err)
+	}
+	if writer.calls != 0 {
+		t.Error("no debe escribir si la base cambió")
+	}
+	if _, ok := store.Get("prop_d"); !ok {
+		t.Error("la propuesta no debe consumirse: el usuario puede volver a proponer")
+	}
+}
+
+func TestConfirmProposal_KeepsBudgetProposalOnWriteFailure(t *testing.T) {
+	store := memstore.New()
+	store.Save(budgetProposal("prop_f", 3000, 5000))
+	writer := &fakeWriter{err: domain.NewError(domain.KindUnauthorized, "meta", errors.New("sin ads_management"))}
+	reader := &fakeReader{campaign: campaignWithBudget(3000)}
+	uc := NewConfirmProposal(store, reader, writer, slog.Default())
+
+	_, err := uc.Execute(context.Background(), "prop_f", "x")
+
+	if domain.KindOf(err) != domain.KindUnauthorized {
+		t.Errorf("debe propagar el error de escritura, got %v", err)
+	}
+	if _, ok := store.Get("prop_f"); !ok {
+		t.Error("si falla la escritura, la propuesta NO debe consumirse")
+	}
+}
+
+func TestConfirmProposal_BudgetProposalCannotBeConfirmedTwice(t *testing.T) {
+	store := memstore.New()
+	store.Save(budgetProposal("prop_2x", 3000, 5000))
+	writer := &fakeWriter{}
+	reader := &fakeReader{campaign: campaignWithBudget(3000)}
+	uc := NewConfirmProposal(store, reader, writer, slog.Default())
+
+	if _, err := uc.Execute(context.Background(), "prop_2x", "x"); err != nil {
+		t.Fatalf("primera confirmación falló: %v", err)
+	}
+	_, err := uc.Execute(context.Background(), "prop_2x", "x")
+	if domain.KindOf(err) != domain.KindNotFound {
+		t.Errorf("la segunda confirmación debe ser not_found, got %v", err)
+	}
+	if writer.calls != 1 {
+		t.Errorf("escribió %d veces, esperaba 1", writer.calls)
+	}
+}
+
+func TestConfirmProposal_AppliesAdSetBudgetOnly(t *testing.T) {
+	// Confirmar sobre un conjunto escribe en el nodo del conjunto, nunca en la
+	// campaña ni en los otros conjuntos (FR-031).
+	store := memstore.New()
+	p := budgetProposal("prop_as", 1500, 2500)
+	p.Level = domain.LevelAdSet
+	p.EntityID = "as1"
+	p.EntityName = "Público frío"
+	store.Save(p)
+
+	writer := &fakeWriter{}
+	reader := &fakeReader{adSet: domain.AdSet{
+		ID: "as1", Name: "Público frío", Status: domain.CampaignActive, CampaignID: "c1",
+		Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(1500)},
+	}}
+	var buf bytes.Buffer
+	uc := NewConfirmProposal(store, reader, writer, slog.New(slog.NewTextHandler(&buf, nil)))
+
+	if _, err := uc.Execute(context.Background(), "prop_as", "Mariana"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if writer.gotID != "as1" {
+		t.Errorf("escribió sobre %q, esperaba as1", writer.gotID)
+	}
+	if writer.gotBudget.Amount.Pesos() != 2500 {
+		t.Errorf("monto aplicado = %v, esperaba 2500", writer.gotBudget.Amount.Pesos())
+	}
+	if log := buf.String(); !strings.Contains(log, "nivel=adset") || !strings.Contains(log, "entidad_id=as1") {
+		t.Errorf("la auditoría debe identificar el conjunto: %s", log)
+	}
+}
+
+func TestConfirmProposal_AdSetDriftRejected(t *testing.T) {
+	store := memstore.New()
+	p := budgetProposal("prop_asd", 1500, 2500)
+	p.Level = domain.LevelAdSet
+	p.EntityID = "as1"
+	store.Save(p)
+
+	writer := &fakeWriter{}
+	reader := &fakeReader{adSet: domain.AdSet{
+		ID: "as1", Status: domain.CampaignActive, CampaignID: "c1",
+		Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(1900)}, // derivó
+	}}
+	uc := NewConfirmProposal(store, reader, writer, slog.Default())
+
+	_, err := uc.Execute(context.Background(), "prop_asd", "x")
+	if !errors.Is(err, domain.ErrBudgetDrifted) {
+		t.Errorf("error = %v, esperaba ErrBudgetDrifted", err)
+	}
+	if writer.calls != 0 {
+		t.Error("no debe escribir si la base cambió")
+	}
+}
+
+func TestConfirmProposal_IndependentProposalsDoNotInterfere(t *testing.T) {
+	// Reasignación entre campañas: bajar en una y subir en otra son dos
+	// operaciones separadas; confirmar una no arrastra a la otra (US4).
+	store := memstore.New()
+
+	baja := budgetProposal("prop_baja", 5000, 2000)
+	suba := budgetProposal("prop_suba", 3000, 6000)
+	suba.CampaignID = "c2"
+	suba.EntityID = "c2"
+	suba.CampaignName = "Remarketing"
+	store.Save(baja)
+	store.Save(suba)
+
+	writer := &fakeWriter{}
+	reader := &fakeReader{campaign: campaignWithBudget(5000)}
+	uc := NewConfirmProposal(store, reader, writer, slog.Default())
+
+	if _, err := uc.Execute(context.Background(), "prop_baja", "Mariana"); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if writer.calls != 1 {
+		t.Errorf("escribió %d veces, esperaba 1", writer.calls)
+	}
+	if writer.gotBudget.Amount.Pesos() != 2000 {
+		t.Errorf("aplicó %v, esperaba la baja a 2000", writer.gotBudget.Amount.Pesos())
+	}
+	if _, ok := store.Get("prop_suba"); !ok {
+		t.Error("la otra propuesta debe seguir pendiente e intacta")
 	}
 }

@@ -17,7 +17,20 @@ import (
 type noopWriter struct {
 	calls  int
 	status domain.CampaignStatus
+	budget domain.Budget
 	err    error
+}
+
+func (w *noopWriter) UpdateCampaignBudget(_ context.Context, _ string, b domain.Budget) error {
+	w.calls++
+	w.budget = b
+	return w.err
+}
+
+func (w *noopWriter) UpdateAdSetBudget(_ context.Context, _ string, b domain.Budget) error {
+	w.calls++
+	w.budget = b
+	return w.err
 }
 
 func (w *noopWriter) UpdateCampaignStatus(_ context.Context, _ string, s domain.CampaignStatus) error {
@@ -32,6 +45,8 @@ type fakeReader struct {
 	insights  []domain.Insight
 	breakdown domain.AudienceBreakdown
 	ads       []domain.AdInsight
+	adSets    []domain.AdSet
+	adSet     domain.AdSet
 	err       error
 }
 
@@ -46,6 +61,12 @@ func (f *fakeReader) GetAudienceBreakdown(context.Context, domain.AudienceQuery)
 }
 func (f *fakeReader) GetAdInsights(context.Context, domain.AdQuery) ([]domain.AdInsight, error) {
 	return f.ads, f.err
+}
+func (f *fakeReader) GetAdSets(context.Context, string) ([]domain.AdSet, error) {
+	return f.adSets, f.err
+}
+func (f *fakeReader) GetAdSet(context.Context, string) (domain.AdSet, error) {
+	return f.adSet, f.err
 }
 func (f *fakeReader) GetCampaign(context.Context, string) (domain.Campaign, error) {
 	return f.campaign, f.err
@@ -222,7 +243,7 @@ func TestProposeThenConfirm_Flow(t *testing.T) {
 	writer := &noopWriter{}
 
 	propose := proposeCampaignStatusHandler(app.NewProposeCampaignStatus(fake, store))
-	confirm := confirmActionHandler(app.NewConfirmProposal(store, writer, nil))
+	confirm := confirmActionHandler(app.NewConfirmProposal(store, fake, writer, nil))
 
 	// 1) propose: no debe escribir, y devuelve un proposal_id.
 	res, _ := propose(context.Background(), newRequest(map[string]any{"campaign_id": "1", "action": "pause"}))
@@ -255,7 +276,7 @@ func TestProposeThenConfirm_Flow(t *testing.T) {
 
 // Principio II: confirmar sin un propose previo válido debe fallar.
 func TestConfirm_WithoutProposeRejected(t *testing.T) {
-	confirm := confirmActionHandler(app.NewConfirmProposal(memstore.New(), &noopWriter{}, nil))
+	confirm := confirmActionHandler(app.NewConfirmProposal(memstore.New(), &fakeReader{}, &noopWriter{}, nil))
 	res, _ := confirm(context.Background(), newRequest(map[string]any{"proposal_id": "prop_inventado"}))
 	if !res.IsError {
 		t.Fatal("confirmar un id inexistente debe dar error")
@@ -269,7 +290,9 @@ func TestToolBuilders_HaveExpectedNames(t *testing.T) {
 		"get_audience_breakdown":  audienceTool().Name,
 		"get_conversion_funnel":   funnelTool().Name,
 		"get_ad_performance":      adPerformanceTool().Name,
+		"get_budgets":             budgetsTool().Name,
 		"propose_campaign_status": proposeCampaignStatusTool().Name,
+		"propose_budget":          proposeBudgetTool().Name,
 		"confirm_action":          confirmActionTool().Name,
 	}
 	for want, got := range cases {
@@ -288,8 +311,10 @@ func TestNewServer_BuildsWithAllUseCases(t *testing.T) {
 		Audience:      app.NewGetAudienceBreakdown(fake, th(), su()),
 		Funnel:        app.NewGetFunnel(fake),
 		AdPerformance: app.NewGetAdPerformance(fake, th(), su()),
+		Budgets:       app.NewGetBudgets(fake),
 		ProposeStatus: app.NewProposeCampaignStatus(fake, store),
-		Confirm:       app.NewConfirmProposal(store, &noopWriter{}, nil),
+		ProposeBudget: app.NewProposeBudget(fake, store, domain.DefaultGuardrails(), th(), su()),
+		Confirm:       app.NewConfirmProposal(store, fake, &noopWriter{}, nil),
 	})
 	if srv == nil {
 		t.Fatal("NewServer devolvió nil")
@@ -303,5 +328,268 @@ func TestInsightsHandler_MalformedDateRejected(t *testing.T) {
 	res, _ := h(context.Background(), newRequest(map[string]any{"since": "ayer", "until": "hoy"}))
 	if !res.IsError {
 		t.Fatal("expected error result for malformed dates")
+	}
+}
+
+// Principio II: confirm_action debe ser la única tool marcada como destructiva.
+// Cualquier propose_* que se anote como destructiva sería una señal equivocada
+// para el cliente MCP.
+func TestOnlyConfirmActionIsDestructive(t *testing.T) {
+	tools := []mcp.Tool{
+		campaignsTool(), insightsTool(), audienceTool(), funnelTool(), adPerformanceTool(), budgetsTool(),
+		proposeCampaignStatusTool(), proposeBudgetTool(), confirmActionTool(),
+	}
+
+	for _, tool := range tools {
+		destructive := tool.Annotations.DestructiveHint != nil && *tool.Annotations.DestructiveHint
+		if tool.Name == "confirm_action" {
+			if !destructive {
+				t.Error("confirm_action debe estar anotada como destructiva")
+			}
+			continue
+		}
+		if destructive {
+			t.Errorf("%s no debería estar anotada como destructiva", tool.Name)
+		}
+	}
+}
+
+func TestProposeBudgetHandler_ProposesWithoutWriting(t *testing.T) {
+	fake := &fakeReader{campaign: domain.Campaign{
+		ID: "c1", Name: "Ventas", Status: domain.CampaignActive,
+		Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(3000)},
+	}}
+	store := memstore.New()
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, store, domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id": "c1",
+		"amount_ars":  5000.0,
+	}))
+
+	if res.IsError {
+		t.Fatalf("no esperaba error: %+v", res)
+	}
+	text := resultText(res)
+	for _, want := range []string{"todavía no cambié nada", "$3.000", "$5.000", "confirm_action"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("la propuesta debería mencionar %q, vino: %s", want, text)
+		}
+	}
+}
+
+func TestProposeBudgetHandler_RequiresAChange(t *testing.T) {
+	fake := &fakeReader{}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{"campaign_id": "c1"}))
+
+	if !res.IsError {
+		t.Fatal("sin monto ni porcentaje debería ser error")
+	}
+}
+
+func TestProposeBudgetHandler_GuardrailMessageIsHuman(t *testing.T) {
+	fake := &fakeReader{campaign: domain.Campaign{
+		ID: "c1", Name: "Ventas", Status: domain.CampaignActive,
+		Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(1000)},
+	}}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id": "c1",
+		"amount_ars":  15000.0, // 15x: excede el factor de 3x
+	}))
+
+	if !res.IsError {
+		t.Fatal("un salto de 15x debería rechazarse")
+	}
+	if text := resultText(res); !strings.Contains(text, "$3.000") {
+		t.Errorf("el mensaje debería decir el máximo admitido, vino: %s", text)
+	}
+}
+
+func TestBudgetsHandler_AdSetLevelListsThem(t *testing.T) {
+	fake := &fakeReader{
+		campaign: domain.Campaign{ID: "c1", Name: "Ventas", Status: domain.CampaignActive},
+		adSets: []domain.AdSet{
+			{ID: "as1", Name: "Público frío", Status: domain.CampaignActive, CampaignID: "c1",
+				Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(1500)}},
+			{ID: "as2", Name: "Remarketing", Status: domain.CampaignPaused, CampaignID: "c1",
+				Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(800)}},
+		},
+	}
+	h := budgetsHandler(app.NewGetBudgets(fake))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{"campaign_id": "c1"}))
+
+	if res.IsError {
+		t.Fatalf("no esperaba error: %s", resultText(res))
+	}
+	text := resultText(res)
+	for _, want := range []string{"Público frío", "Remarketing", "$1.500", "$800", "pausada", "as1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("la salida debería mencionar %q, vino: %s", want, text)
+		}
+	}
+	// Sólo el conjunto activo cuenta como gasto comprometido.
+	if !strings.Contains(text, "Gasto diario comprometido: $1.500") {
+		t.Errorf("el total diario debería ser $1.500, vino: %s", text)
+	}
+}
+
+func TestBudgetsHandler_CampaignLevel(t *testing.T) {
+	fake := &fakeReader{campaign: domain.Campaign{
+		ID: "c1", Name: "Ventas", Status: domain.CampaignActive,
+		Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(3000)},
+	}}
+	h := budgetsHandler(app.NewGetBudgets(fake))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{"campaign_id": "c1"}))
+
+	text := resultText(res)
+	if !strings.Contains(text, "a nivel campaña") || !strings.Contains(text, "$3.000") {
+		t.Errorf("salida inesperada: %s", text)
+	}
+	// $3.000/día ≈ $90.000/mes.
+	if !strings.Contains(text, "$90.000") {
+		t.Errorf("debería proyectar el gasto mensual, vino: %s", text)
+	}
+}
+
+func TestProposeBudgetHandler_LevelMismatchListsAdSets(t *testing.T) {
+	// El caso más importante de UX: pedir el cambio en la campaña cuando la plata
+	// está en los conjuntos no deja al usuario sin salida (FR-008).
+	fake := &fakeReader{
+		campaign: domain.Campaign{ID: "c1", Name: "Ventas", Status: domain.CampaignActive},
+		adSets: []domain.AdSet{
+			{ID: "as1", Name: "Público frío", Status: domain.CampaignActive, CampaignID: "c1",
+				Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(1500)}},
+		},
+	}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id": "c1",
+		"amount_ars":  5000.0,
+	}))
+
+	if !res.IsError {
+		t.Fatal("debería rechazarse: el presupuesto está en los conjuntos")
+	}
+	text := resultText(res)
+	for _, want := range []string{"Público frío", "as1", "adset_id"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("el mensaje debería guiar al usuario con %q, vino: %s", want, text)
+		}
+	}
+}
+
+func TestProposeBudgetHandler_AdSetProposal(t *testing.T) {
+	fake := &fakeReader{
+		campaign: domain.Campaign{ID: "c1", Name: "Ventas", Status: domain.CampaignActive},
+		adSet: domain.AdSet{
+			ID: "as1", Name: "Público frío", Status: domain.CampaignActive, CampaignID: "c1",
+			Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(1500)},
+		},
+	}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id":    "c1",
+		"adset_id":       "as1",
+		"percent_change": 30.0,
+	}))
+
+	if res.IsError {
+		t.Fatalf("no esperaba error: %s", resultText(res))
+	}
+	text := resultText(res)
+	for _, want := range []string{"conjunto de anuncios", "Público frío", "Ventas", "$1.500", "$1.950", "+30%"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("la propuesta debería mencionar %q, vino: %s", want, text)
+		}
+	}
+}
+
+func TestProposeBudgetHandler_ShowsPerformanceContext(t *testing.T) {
+	roas := 6.39
+	purchases := int64(22)
+	fake := &fakeReader{
+		campaign: domain.Campaign{
+			ID: "c1", Name: "Ventas", Status: domain.CampaignActive,
+			Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(3000)},
+		},
+		insights: []domain.Insight{{
+			CampaignID: "c1", CampaignName: "Ventas",
+			Metrics: domain.Metrics{
+				Spend: 10000, Impressions: 50000, Clicks: 800, LinkClicks: 600,
+				ROAS: &roas, Purchases: &purchases,
+			},
+		}},
+	}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id": "c1", "amount_ars": 5000.0,
+	}))
+
+	text := resultText(res)
+	for _, want := range []string{"Rendimiento", "6.39x", "✅", "mínimo de 2x"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("la propuesta debería mostrar %q, vino: %s", want, text)
+		}
+	}
+}
+
+func TestProposeBudgetHandler_WarnsOnLowROAS(t *testing.T) {
+	roas := 0.9
+	purchases := int64(20)
+	fake := &fakeReader{
+		campaign: domain.Campaign{
+			ID: "c1", Name: "Ventas", Status: domain.CampaignActive,
+			Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(3000)},
+		},
+		insights: []domain.Insight{{
+			CampaignID: "c1",
+			Metrics: domain.Metrics{
+				Spend: 10000, Impressions: 50000, Clicks: 800, LinkClicks: 600,
+				ROAS: &roas, Purchases: &purchases,
+			},
+		}},
+	}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id": "c1", "amount_ars": 5000.0,
+	}))
+
+	if res.IsError {
+		t.Fatal("advertir no es bloquear: la propuesta debe armarse igual")
+	}
+	if text := resultText(res); !strings.Contains(text, "por debajo del mínimo de 2x") {
+		t.Errorf("debería advertir el bajo rendimiento, vino: %s", text)
+	}
+}
+
+func TestProposeBudgetHandler_WarnsOnInsufficientData(t *testing.T) {
+	fake := &fakeReader{
+		campaign: domain.Campaign{
+			ID: "c1", Name: "Ventas", Status: domain.CampaignActive,
+			Budget: &domain.Budget{Type: domain.BudgetDaily, Amount: domain.MoneyFromPesos(3000)},
+		},
+		// Sin insights: no hay actividad sobre la cual apoyarse.
+	}
+	h := proposeBudgetHandler(app.NewProposeBudget(fake, memstore.New(), domain.DefaultGuardrails(), th(), su()))
+
+	res, _ := h(context.Background(), newRequest(map[string]any{
+		"campaign_id": "c1", "amount_ars": 5000.0,
+	}))
+
+	if res.IsError {
+		t.Fatal("la falta de datos no debe bloquear la propuesta")
+	}
+	if text := resultText(res); !strings.Contains(text, "Sin actividad registrada") {
+		t.Errorf("debería declarar que no hay datos, vino: %s", text)
 	}
 }

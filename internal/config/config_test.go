@@ -194,3 +194,72 @@ func TestConfig_StringRedactsToken(t *testing.T) {
 		t.Errorf("String() should still include non-secret fields: %q", out)
 	}
 }
+
+// baseEnv devuelve el mínimo obligatorio para que Load no falle por credenciales.
+func baseEnv(extra map[string]string) map[string]string {
+	m := map[string]string{
+		"META_TOKEN":         "secret-token",
+		"META_AD_ACCOUNT_ID": "act_331498724",
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
+func TestLoad_GuardrailDefaults(t *testing.T) {
+	cfg, err := Load(envMap(baseEnv(nil)))
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if cfg.Guardrails.MaxIncreaseFactor != 3 {
+		t.Errorf("MaxIncreaseFactor = %v, esperaba 3", cfg.Guardrails.MaxIncreaseFactor)
+	}
+	if cfg.Guardrails.MaxDailyBudget.Pesos() != 25000 {
+		t.Errorf("MaxDailyBudget = %v, esperaba 25000", cfg.Guardrails.MaxDailyBudget.Pesos())
+	}
+}
+
+func TestLoad_GuardrailOverrides(t *testing.T) {
+	cfg, err := Load(envMap(baseEnv(map[string]string{
+		"BUDGET_MAX_INCREASE_FACTOR": "2.5",
+		"BUDGET_MAX_DAILY_ARS":       "40000",
+	})))
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if cfg.Guardrails.MaxIncreaseFactor != 2.5 {
+		t.Errorf("MaxIncreaseFactor = %v, esperaba 2.5", cfg.Guardrails.MaxIncreaseFactor)
+	}
+	if cfg.Guardrails.MaxDailyBudget.Pesos() != 40000 {
+		t.Errorf("MaxDailyBudget = %v, esperaba 40000", cfg.Guardrails.MaxDailyBudget.Pesos())
+	}
+}
+
+func TestLoad_GuardrailInvalidValuesFailFast(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "factor no numérico", env: map[string]string{"BUDGET_MAX_INCREASE_FACTOR": "mucho"}},
+		{name: "factor menor a 1", env: map[string]string{"BUDGET_MAX_INCREASE_FACTOR": "0.5"}},
+		{name: "factor negativo", env: map[string]string{"BUDGET_MAX_INCREASE_FACTOR": "-3"}},
+		{name: "techo no numérico", env: map[string]string{"BUDGET_MAX_DAILY_ARS": "mucha plata"}},
+		{name: "techo cero", env: map[string]string{"BUDGET_MAX_DAILY_ARS": "0"}},
+		{name: "techo negativo", env: map[string]string{"BUDGET_MAX_DAILY_ARS": "-1000"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(envMap(baseEnv(tt.env)))
+			if err == nil {
+				t.Fatal("esperaba fallo de arranque explícito, no hubo error")
+			}
+			if !strings.Contains(err.Error(), "config:") {
+				t.Errorf("el error debería identificar la config, vino: %v", err)
+			}
+		})
+	}
+}

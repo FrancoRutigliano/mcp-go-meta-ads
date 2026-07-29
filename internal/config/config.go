@@ -39,6 +39,7 @@ type Config struct {
 	AuthToken   string                   // bearer del endpoint MCP; vacío = abierto
 	Thresholds  domain.Thresholds        // umbrales de negocio (Principio VIII)
 	Sufficiency domain.SufficiencyPolicy // mínimos de muestra (Principio IX)
+	Guardrails  domain.Guardrails        // límites de seguridad de escritura de presupuesto
 }
 
 // Load lee la configuración usando la función getenv provista (normalmente
@@ -73,6 +74,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		return nil, err
 	}
 
+	guardrails, err := loadGuardrails(getenv)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		AccessToken: token,
 		AccountID:   account,
@@ -82,7 +88,36 @@ func Load(getenv func(string) string) (*Config, error) {
 		AuthToken:   strings.TrimSpace(getenv("MCP_AUTH_TOKEN")),
 		Thresholds:  thresholds,
 		Sufficiency: sufficiency,
+		Guardrails:  guardrails,
 	}, nil
+}
+
+// loadGuardrails carga los límites de seguridad de escritura de presupuesto
+// (feature 010). Un valor presente pero inválido es un error de arranque
+// explícito: un guardrail mal configurado es peor que no tenerlo, porque da una
+// falsa sensación de protección sobre gasto real.
+func loadGuardrails(getenv func(string) string) (domain.Guardrails, error) {
+	g := domain.DefaultGuardrails()
+
+	factor, err := floatEnv(getenv, "BUDGET_MAX_INCREASE_FACTOR", g.MaxIncreaseFactor)
+	if err != nil {
+		return g, err
+	}
+	if factor < 1 {
+		return g, fmt.Errorf("config: BUDGET_MAX_INCREASE_FACTOR debe ser >= 1 (recibido: %v)", factor)
+	}
+	g.MaxIncreaseFactor = factor
+
+	techo, err := floatEnv(getenv, "BUDGET_MAX_DAILY_ARS", g.MaxDailyBudget.Pesos())
+	if err != nil {
+		return g, err
+	}
+	if techo <= 0 {
+		return g, fmt.Errorf("config: BUDGET_MAX_DAILY_ARS debe ser mayor a cero (recibido: %v)", techo)
+	}
+	g.MaxDailyBudget = domain.MoneyFromPesos(techo)
+
+	return g, nil
 }
 
 // loadBusinessRules parte de los defaults y aplica overrides numéricos del

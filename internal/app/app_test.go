@@ -17,6 +17,8 @@ type fakeReader struct {
 	insights     []domain.Insight
 	breakdown    domain.AudienceBreakdown
 	ads          []domain.AdInsight
+	adSets       []domain.AdSet
+	adSet        domain.AdSet
 	err          error
 	gotCampaignQ domain.CampaignQuery
 	gotInsightQ  domain.InsightQuery
@@ -47,6 +49,16 @@ func (f *fakeReader) GetAdInsights(_ context.Context, q domain.AdQuery) ([]domai
 	f.called = true
 	f.gotAdQ = q
 	return f.ads, f.err
+}
+
+func (f *fakeReader) GetAdSets(_ context.Context, _ string) ([]domain.AdSet, error) {
+	f.called = true
+	return f.adSets, f.err
+}
+
+func (f *fakeReader) GetAdSet(_ context.Context, _ string) (domain.AdSet, error) {
+	f.called = true
+	return f.adSet, f.err
 }
 
 func (f *fakeReader) GetCampaign(_ context.Context, id string) (domain.Campaign, error) {

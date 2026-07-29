@@ -15,22 +15,25 @@ import (
 // (Principio IV).
 type ConfirmProposal struct {
 	store  ProposalStore
+	reader ports.MetaReader
 	writer ports.MetaWriter
 	now    func() time.Time
 	audit  *slog.Logger
 }
 
-// NewConfirmProposal construye el caso de uso con reloj real.
-func NewConfirmProposal(store ProposalStore, writer ports.MetaWriter, audit *slog.Logger) *ConfirmProposal {
-	return NewConfirmProposalWithClock(store, writer, audit, time.Now)
+// NewConfirmProposal construye el caso de uso con reloj real. El reader se usa
+// para releer el estado actual antes de escribir y detectar que la base cambió
+// desde que se armó la propuesta.
+func NewConfirmProposal(store ProposalStore, reader ports.MetaReader, writer ports.MetaWriter, audit *slog.Logger) *ConfirmProposal {
+	return NewConfirmProposalWithClock(store, reader, writer, audit, time.Now)
 }
 
 // NewConfirmProposalWithClock permite inyectar reloj (tests).
-func NewConfirmProposalWithClock(store ProposalStore, writer ports.MetaWriter, audit *slog.Logger, now func() time.Time) *ConfirmProposal {
+func NewConfirmProposalWithClock(store ProposalStore, reader ports.MetaReader, writer ports.MetaWriter, audit *slog.Logger, now func() time.Time) *ConfirmProposal {
 	if audit == nil {
 		audit = slog.Default()
 	}
-	return &ConfirmProposal{store: store, writer: writer, audit: audit, now: now}
+	return &ConfirmProposal{store: store, reader: reader, writer: writer, audit: audit, now: now}
 }
 
 // Execute aplica la propuesta identificada por proposalID. confirmedBy queda
@@ -67,8 +70,14 @@ func (uc *ConfirmProposal) Execute(ctx context.Context, proposalID, confirmedBy 
 	uc.store.Delete(p.ID)
 
 	// Auditoría (Principio IV): timestamp lo agrega slog automáticamente.
+	level := p.Level
+	if level == "" {
+		level = domain.LevelCampaign
+	}
 	uc.audit.Info("escritura confirmada",
 		"accion", string(p.Kind),
+		"nivel", string(level),
+		"entidad_id", p.TargetID(),
 		"campaña_id", p.CampaignID,
 		"campaña", p.CampaignName,
 		"campo", p.Field,
@@ -81,11 +90,71 @@ func (uc *ConfirmProposal) Execute(ctx context.Context, proposalID, confirmedBy 
 }
 
 func (uc *ConfirmProposal) apply(ctx context.Context, p domain.Proposal) error {
+	const op = "app.ConfirmProposal"
+
 	switch p.Kind {
 	case domain.ProposalCampaignStatus:
 		return uc.writer.UpdateCampaignStatus(ctx, p.CampaignID, domain.CampaignStatus(p.After))
+	case domain.ProposalBudget:
+		return uc.applyBudget(ctx, p)
 	default:
-		return domain.NewError(domain.KindInvalidInput, "app.ConfirmProposal",
+		return domain.NewError(domain.KindInvalidInput, op,
 			fmt.Errorf("tipo de propuesta no soportado: %q", p.Kind))
 	}
+}
+
+// applyBudget relee el presupuesto vigente antes de escribir. Si cambió desde
+// que se armó la propuesta (por ejemplo, alguien lo tocó desde el Business
+// Manager), no se aplica: el usuario aprobó un cambio sobre una base que ya no
+// existe (FR-030, decisión D6 del plan).
+func (uc *ConfirmProposal) applyBudget(ctx context.Context, p domain.Proposal) error {
+	const op = "app.ConfirmProposal"
+
+	if p.Budget == nil {
+		return domain.NewError(domain.KindInvalidInput, op,
+			fmt.Errorf("la propuesta de presupuesto no trae el cambio calculado"))
+	}
+
+	current, err := uc.currentBudget(ctx, p)
+	if err != nil {
+		return err
+	}
+	if current.Amount.Cents != p.Budget.Before.Cents || current.Type != p.Budget.Type {
+		return domain.NewError(domain.KindInvalidInput, op, domain.ErrBudgetDrifted)
+	}
+
+	next := domain.Budget{Type: p.Budget.Type, Amount: p.Budget.After}
+
+	// Se escribe sólo sobre la entidad de la propuesta: un cambio en un conjunto
+	// no toca a los demás conjuntos de la campaña (FR-031).
+	if p.Level == domain.LevelAdSet {
+		return uc.writer.UpdateAdSetBudget(ctx, p.TargetID(), next)
+	}
+	return uc.writer.UpdateCampaignBudget(ctx, p.TargetID(), next)
+}
+
+// currentBudget lee el presupuesto vigente de la entidad afectada.
+func (uc *ConfirmProposal) currentBudget(ctx context.Context, p domain.Proposal) (domain.Budget, error) {
+	const op = "app.ConfirmProposal"
+
+	if p.Level == domain.LevelAdSet {
+		set, err := uc.reader.GetAdSet(ctx, p.TargetID())
+		if err != nil {
+			return domain.Budget{}, err
+		}
+		if !set.ManagesOwnBudget() {
+			// El presupuesto se movió de nivel entre el propose y el confirm.
+			return domain.Budget{}, domain.NewError(domain.KindInvalidInput, op, domain.ErrBudgetDrifted)
+		}
+		return *set.Budget, nil
+	}
+
+	campaign, err := uc.reader.GetCampaign(ctx, p.CampaignID)
+	if err != nil {
+		return domain.Budget{}, err
+	}
+	if !campaign.ManagesOwnBudget() {
+		return domain.Budget{}, domain.NewError(domain.KindInvalidInput, op, domain.ErrBudgetDrifted)
+	}
+	return *campaign.Budget, nil
 }
