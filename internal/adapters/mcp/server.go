@@ -15,7 +15,9 @@ type Deps struct {
 	Audience      *app.GetAudienceBreakdown
 	Funnel        *app.GetFunnel
 	AdPerformance *app.GetAdPerformance
+	Budgets       *app.GetBudgets
 	ProposeStatus *app.ProposeCampaignStatus
+	ProposeBudget *app.ProposeBudget
 	Confirm       *app.ConfirmProposal
 }
 
@@ -35,9 +37,11 @@ func NewServer(name, version string, d Deps) *server.MCPServer {
 	s.AddTool(audienceTool(), audienceHandler(d.Audience))
 	s.AddTool(funnelTool(), funnelHandler(d.Funnel))
 	s.AddTool(adPerformanceTool(), adPerformanceHandler(d.AdPerformance))
+	s.AddTool(budgetsTool(), budgetsHandler(d.Budgets))
 
 	// Escritura: dos pasos (propose sin efecto → confirm aplica).
 	s.AddTool(proposeCampaignStatusTool(), proposeCampaignStatusHandler(d.ProposeStatus))
+	s.AddTool(proposeBudgetTool(), proposeBudgetHandler(d.ProposeBudget))
 	s.AddTool(confirmActionTool(), confirmActionHandler(d.Confirm))
 
 	return s

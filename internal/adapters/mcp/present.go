@@ -1,7 +1,10 @@
 package mcp
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/mashats/meta-ads-manager/internal/app"
@@ -12,6 +15,13 @@ import (
 // en español para el usuario final no técnico (Constitución, Principio VII).
 // Nunca expone detalles técnicos, códigos ni stack traces.
 func messageForError(err error) string {
+	// Primero las condiciones de negocio que necesitan un mensaje preciso, con
+	// cifras reales cuando corresponde. Recién si ninguna aplica se cae al
+	// switch genérico por Kind.
+	if msg, ok := budgetMessage(err); ok {
+		return msg
+	}
+
 	switch domain.KindOf(err) {
 	case domain.KindUnauthorized:
 		return "No pude acceder a tu cuenta publicitaria: la credencial no es válida o no tiene permisos de lectura. Revisá el acceso e intentá de nuevo."
@@ -24,6 +34,145 @@ func messageForError(err error) string {
 	default:
 		return "Hubo un problema al consultar Meta. Probá de nuevo en unos minutos; si el problema persiste, avisá al equipo."
 	}
+}
+
+// budgetMessage resuelve los mensajes propios de la escritura de presupuesto
+// (feature 010). Devuelve ok=false si el error no es de este dominio, para que
+// el llamador caiga al mensaje genérico por Kind.
+func budgetMessage(err error) (string, bool) {
+	var ge *domain.GuardrailError
+	if errors.As(err, &ge) {
+		switch ge.Limit {
+		case domain.LimitIncreaseFactor:
+			return fmt.Sprintf(
+				"No puedo subir el presupuesto de %s a %s de una sola vez: es un salto demasiado grande. "+
+					"El máximo permitido en un solo cambio es %s. Si querés llegar más alto, hacelo en varios pasos.",
+				formatMoney(ge.Current), formatMoney(ge.Attempted), formatMoney(ge.Max)), true
+		case domain.LimitDailyCeiling:
+			return fmt.Sprintf(
+				"Un presupuesto de %s por día supera el tope de seguridad configurado, que es %s por día. "+
+					"Si de verdad querés gastar más, hay que subir ese tope en la configuración del servidor.",
+				formatMoney(ge.Attempted), formatMoney(ge.Max)), true
+		}
+	}
+
+	// El nivel equivocado no es un callejón sin salida: cuando la plata está en
+	// los conjuntos, se los mostramos para que elija (FR-008).
+	var le *domain.BudgetLevelError
+	if errors.As(err, &le) {
+		return levelMismatchMessage(le), true
+	}
+
+	switch {
+	case errors.Is(err, domain.ErrBudgetLevelMismatch):
+		return "El presupuesto de esa campaña no se controla en el nivel que indicaste. " +
+			"Fijate con la tool get_budgets si la plata está en la campaña o repartida en sus conjuntos de anuncios.", true
+	case errors.Is(err, domain.ErrNoBudgetToScale):
+		return "No puedo aplicar un porcentaje porque esa entidad no tiene un presupuesto vigente sobre el cual calcularlo. " +
+			"Indicá un monto en pesos.", true
+	case errors.Is(err, domain.ErrBothAmountAndPercent):
+		return "Indicá una sola cosa: o el monto en pesos, o el porcentaje de ajuste. No las dos juntas.", true
+	case errors.Is(err, domain.ErrNoBudgetChange):
+		return "No me dijiste cuánto querés que quede el presupuesto. Indicá un monto en pesos o un porcentaje de ajuste.", true
+	case errors.Is(err, domain.ErrBudgetUnchanged):
+		return "Ese presupuesto ya tiene ese valor, así que no hay nada que cambiar.", true
+	case errors.Is(err, domain.ErrBudgetDrifted):
+		return "El presupuesto cambió desde que armé la propuesta, así que no la aplico sobre información vieja. " +
+			"Pedime la propuesta de nuevo para ver el valor actual.", true
+	case errors.Is(err, domain.ErrBudgetBelowMinimum):
+		return "Meta rechazó ese monto porque es menor al presupuesto mínimo que permite. " +
+			"Probá con un monto más alto.", true
+	case errors.Is(err, domain.ErrNoAdSets):
+		return "Esa campaña no tiene conjuntos de anuncios, así que no hay dónde ajustar el presupuesto.", true
+	}
+
+	return "", false
+}
+
+// levelMismatchMessage explica dónde vive realmente el presupuesto y, cuando
+// está en los conjuntos, los lista para que el usuario elija sin salir de la
+// conversación.
+func levelMismatchMessage(le *domain.BudgetLevelError) string {
+	if le.Expected == domain.LevelCampaign {
+		return fmt.Sprintf(
+			"En la campaña \"%s\" el presupuesto se maneja de forma centralizada, no conjunto por conjunto. "+
+				"Para cambiarlo, pedí el ajuste sobre la campaña y no sobre un conjunto de anuncios.",
+			le.CampaignName)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "La campaña \"%s\" no tiene un presupuesto propio: la plata está repartida entre sus conjuntos de anuncios.\n",
+		le.CampaignName)
+	b.WriteString("Decime en cuál querés hacer el cambio:\n")
+	for _, set := range le.AdSets {
+		fmt.Fprintf(&b, "• %s — %s — %s (id %s)\n",
+			set.Name, statusES(set.Status), adSetBudgetText(set), set.ID)
+	}
+	b.WriteString("\nDespués volvé a pedir el cambio indicando también el adset_id.")
+	return b.String()
+}
+
+// adSetBudgetText describe el presupuesto de un conjunto.
+func adSetBudgetText(set domain.AdSet) string {
+	if !set.ManagesOwnBudget() {
+		return "sin presupuesto propio"
+	}
+	return fmt.Sprintf("%s %s", formatMoney(set.Budget.Amount), budgetTypeES(set.Budget.Type))
+}
+
+// formatBudgets presenta dónde vive el presupuesto de una campaña y cuánto hay
+// en cada lugar (FR-009, FR-010).
+func formatBudgets(ov app.BudgetOverview) string {
+	var b strings.Builder
+
+	if ov.Level == domain.LevelCampaign {
+		fmt.Fprintf(&b, "Campaña \"%s\": el presupuesto se maneja a nivel campaña.\n", ov.CampaignName)
+		fmt.Fprintf(&b, "• Presupuesto %s: %s\n", budgetTypeES(ov.Campaign.Type), formatMoney(ov.Campaign.Amount))
+		if ov.TotalDaily.IsZero() {
+			b.WriteString("• Hoy no está gastando (la campaña no está activa o el presupuesto no es diario).\n")
+		} else {
+			fmt.Fprintf(&b, "• Gasto diario comprometido: %s (unos %s por mes).\n",
+				formatMoney(ov.TotalDaily), formatMoney(domain.Money{Cents: ov.TotalDaily.Cents * 30}))
+		}
+		b.WriteString("\nPara cambiarlo, usá propose_budget con el campaign_id.")
+		return strings.TrimRight(b.String(), "\n")
+	}
+
+	fmt.Fprintf(&b, "Campaña \"%s\": la plata está repartida entre %d conjuntos de anuncios.\n",
+		ov.CampaignName, len(ov.AdSets))
+	for _, set := range ov.AdSets {
+		fmt.Fprintf(&b, "• %s — %s — %s (id %s)\n",
+			set.Name, statusES(set.Status), adSetBudgetText(set), set.ID)
+	}
+	if ov.TotalDaily.IsZero() {
+		b.WriteString("\nHoy no hay gasto diario comprometido: no hay conjuntos activos con presupuesto diario.")
+	} else {
+		fmt.Fprintf(&b, "\nGasto diario comprometido: %s (unos %s por mes).",
+			formatMoney(ov.TotalDaily), formatMoney(domain.Money{Cents: ov.TotalDaily.Cents * 30}))
+	}
+	b.WriteString("\nPara cambiar uno, usá propose_budget con el campaign_id y el adset_id.")
+	return b.String()
+}
+
+// formatMoney presenta un monto en pesos con separador de miles local. El
+// usuario nunca ve unidades internas de la API (FR-034).
+func formatMoney(m domain.Money) string {
+	pesos := int64(math.Round(m.Pesos()))
+	sign := ""
+	if pesos < 0 {
+		sign = "-"
+		pesos = -pesos
+	}
+
+	digits := strconv.FormatInt(pesos, 10)
+	var b strings.Builder
+	for i, d := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteByte('.')
+		}
+		b.WriteRune(d)
+	}
+	return sign + "$" + b.String()
 }
 
 // formatCampaigns arma un resumen legible de las campañas. truncated indica que
@@ -98,12 +247,123 @@ func formatProposal(p domain.Proposal) string {
 	)
 }
 
+// formatBudgetProposal presenta el cambio de presupuesto con el monto actual, el
+// resultante, la variación, la proyección mensual y el rendimiento reciente,
+// para que el usuario decida informado antes de confirmar (FR-003, FR-004,
+// FR-019, FR-023 a FR-025).
+func formatBudgetProposal(bp app.BudgetProposal) string {
+	p := bp.Proposal
+	d := p.Budget
+	var b strings.Builder
+
+	b.WriteString("Propuesta lista (todavía no cambié nada):\n")
+	fmt.Fprintf(&b, "• %s: \"%s\"%s\n", nivelES(p.Level), entityNameOf(p), campaignSuffix(p))
+	fmt.Fprintf(&b, "• Presupuesto %s: %s → %s (%s)\n",
+		budgetTypeES(d.Type), formatMoney(d.Before), formatMoney(d.After), variacionES(d.Before, d.After))
+
+	if d.Type == domain.BudgetDaily {
+		fmt.Fprintf(&b, "• Eso son unos %s por mes si se mantiene todo el mes.\n",
+			formatMoney(domain.Money{Cents: d.After.Cents * 30}))
+	}
+
+	if p.Active {
+		b.WriteString("• Está activa: el cambio empieza a gastar apenas lo confirmes.\n")
+	} else {
+		b.WriteString("• Está pausada: el cambio queda guardado pero no genera gasto hasta que la actives.\n")
+	}
+
+	b.WriteString(perfBlock(bp))
+
+	fmt.Fprintf(&b, "• Para aplicarlo, confirmá con la tool confirm_action usando proposal_id=%s\n", p.ID)
+	fmt.Fprintf(&b, "• La propuesta vence a las %s.", p.ExpiresAt.Format("15:04"))
+
+	return b.String()
+}
+
+// perfBlock arma el bloque de rendimiento que acompaña a la propuesta. Es
+// honesto en los dos sentidos: si no hay datos suficientes lo dice, y si no se
+// pudo leer el rendimiento tampoco lo oculta (Principios VIII y IX).
+func perfBlock(bp app.BudgetProposal) string {
+	if bp.PerfErr {
+		return "• No pude leer el rendimiento reciente de esta campaña, así que estarías decidiendo sin ese dato.\n"
+	}
+	if bp.Metrics == nil {
+		return fmt.Sprintf("• Sin actividad registrada %s: no hay rendimiento sobre el cual apoyar esta decisión.\n",
+			periodES(bp.Period))
+	}
+
+	var b strings.Builder
+	m := bp.Metrics
+	fmt.Fprintf(&b, "• Rendimiento %s: ROAS %s · gasto %s · compras %s\n",
+		periodES(bp.Period), roasText(*m, bp.Eval), formatMoney(domain.MoneyFromPesos(m.Spend)), purchasesText(*m))
+
+	switch {
+	case bp.Eval.Insufficient:
+		b.WriteString("  ⚠️ Son muy pocos datos para afirmar que convenga este cambio. Podés confirmarlo igual, pero es una apuesta.\n")
+	case bp.Eval.ROAS == domain.StatusBad:
+		b.WriteString("  ❌ Esta campaña rinde por debajo del mínimo de 2x. Subirle el presupuesto agranda la pérdida.\n")
+	case bp.Eval.ROAS == domain.StatusOK:
+		b.WriteString("  ✅ Rinde por encima del mínimo de 2x.\n")
+	}
+	return b.String()
+}
+
 // formatConfirmation presenta el resultado de una escritura ya aplicada.
 func formatConfirmation(p domain.Proposal) string {
+	if p.Kind == domain.ProposalBudget && p.Budget != nil {
+		return fmt.Sprintf("✅ Hecho. El presupuesto %s de %s \"%s\" pasó de %s a %s.",
+			budgetTypeES(p.Budget.Type), nivelES(p.Level), entityNameOf(p),
+			formatMoney(p.Budget.Before), formatMoney(p.Budget.After))
+	}
 	return fmt.Sprintf("✅ Hecho. La campaña \"%s\" pasó de %s a %s.",
 		nameOr(p.CampaignName, p.CampaignID),
 		statusES(domain.CampaignStatus(p.Before)),
 		statusES(domain.CampaignStatus(p.After)))
+}
+
+// variacionES describe el salto en porcentaje, con signo.
+func variacionES(before, after domain.Money) string {
+	if before.IsZero() {
+		return "nuevo"
+	}
+	pct := (float64(after.Cents)/float64(before.Cents) - 1) * 100
+	if pct >= 0 {
+		return fmt.Sprintf("+%.0f%%", pct)
+	}
+	return fmt.Sprintf("%.0f%%", pct)
+}
+
+func nivelES(l domain.BudgetLevel) string {
+	if l == domain.LevelAdSet {
+		return "conjunto de anuncios"
+	}
+	return "campaña"
+}
+
+func budgetTypeES(t domain.BudgetType) string {
+	if t == domain.BudgetLifetime {
+		return "total"
+	}
+	return "diario"
+}
+
+// entityNameOf devuelve el nombre de la entidad afectada, con fallback al id.
+func entityNameOf(p domain.Proposal) string {
+	if strings.TrimSpace(p.EntityName) != "" {
+		return p.EntityName
+	}
+	if p.EntityID != "" {
+		return p.EntityID
+	}
+	return nameOr(p.CampaignName, p.CampaignID)
+}
+
+// campaignSuffix aclara a qué campaña pertenece un conjunto de anuncios.
+func campaignSuffix(p domain.Proposal) string {
+	if p.Level != domain.LevelAdSet {
+		return ""
+	}
+	return fmt.Sprintf(" (de la campaña \"%s\")", nameOr(p.CampaignName, p.CampaignID))
 }
 
 // accionES traduce el estado destino a un verbo de acción.
