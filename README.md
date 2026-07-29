@@ -32,13 +32,36 @@ Variables de entorno (ver `.env.example`):
 
 | Variable | Obligatoria | Default | Descripción |
 |----------|:-----------:|---------|-------------|
-| `META_TOKEN` | sí | — | Token de acceso de Meta (sólo lectura). |
+| `META_TOKEN` | sí | — | Token de acceso de Meta. Necesita `ads_management` para las operaciones de escritura. |
 | `META_AD_ACCOUNT_ID` | sí | — | Cuenta objetivo con prefijo `act_`. |
 | `META_API_VERSION` | no | `v21.0` | Versión de la Graph API. |
 | `PORT` | no | `8080` | Puerto del transporte Streamable HTTP. |
+| `MCP_AUTH_TOKEN` | no | — | Bearer que protege el endpoint MCP. Si está vacío, el endpoint queda abierto y se advierte en el log. |
+
+### Límites de seguridad de escritura
+
+Acotan cuánto puede crecer el gasto en una sola operación de presupuesto. El primero frena el
+error de tipeo puntual (agregar un cero); el segundo, el escalamiento acumulado por cambios
+sucesivos.
+
+| Variable | Obligatoria | Default | Descripción |
+|----------|:-----------:|---------|-------------|
+| `BUDGET_MAX_INCREASE_FACTOR` | no | `3` | Múltiplo máximo del presupuesto vigente en un solo cambio. Debe ser ≥ 1. |
+| `BUDGET_MAX_DAILY_ARS` | no | `25000` | Techo absoluto de presupuesto diario, en pesos. Debe ser > 0. |
+
+### Umbrales de negocio
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `ROAS_MIN` | `2` | ROAS mínimo aceptable. |
+| `LINK_CTR_MIN` / `LINK_CTR_MAX` | `0.8` / `1.5` | Rango saludable de CTR de enlace (%). |
+| `FREQUENCY_MAX` | `3.5` | Frecuencia a partir de la cual se alerta fatiga. |
+| `AVG_TICKET` | — | Ticket promedio de referencia para evaluar el CPA. |
+| `MIN_PURCHASES` / `MIN_IMPRESSIONS` / `MIN_LINK_CLICKS` / `MIN_DAYS` | `1` / `1000` / `50` / `7` | Mínimos de muestra para sostener una conclusión. |
 
 > El token sólo se lee del entorno y nunca se escribe en logs ni respuestas. Si falta el
-> token o la cuenta, el servidor **aborta el arranque** con un mensaje claro.
+> token o la cuenta, el servidor **aborta el arranque** con un mensaje claro. Un guardrail mal
+> configurado también aborta el arranque: es peor una falsa sensación de protección que ninguna.
 
 ## Uso
 

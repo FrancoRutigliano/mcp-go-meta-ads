@@ -48,8 +48,14 @@ campañas de Meta Ads hablando en español.
   **Hecho — falta redeploy + token `ads_management` para que la escritura funcione.**
 
 ### ✍️ Escritura (después de 008 + 009)
-- **010 — Más acciones sobre campañas**: ajustar presupuesto ("priorizar la plata en lo que
-  funciona") sobre el mismo cimiento propose/confirm. (Pausar/activar ya está en 009.)
+- ✅ **010 — Ajustar presupuesto**: `get_budgets` (dónde vive la plata y cuánta hay) +
+  `propose_budget` sobre el cimiento propose/confirm. Cubre **campaña y conjunto de anuncios**:
+  si la campaña reparte el presupuesto, la propuesta lista los conjuntos para elegir. Acepta
+  monto absoluto y ajuste porcentual (el porcentaje se resuelve en el servidor y se confirma en
+  pesos). Dos guardrails configurables: factor máximo de aumento (3x) y techo diario
+  (`BUDGET_MAX_DAILY_ARS`). Detecta deriva entre propose y confirm. La propuesta muestra ROAS
+  evaluado contra 2x y advierte cuando no hay datos suficientes, sin bloquear.
+  **Hecho — falta redeploy + validar contra la cuenta real en qué nivel está el presupuesto.**
 - **011 — Gestión de públicos (escritura)**: crear Custom/Lookalike/Saved audiences, editar
   targeting de un ad set. propose/confirm. ⚠️ Custom Audiences desde lista de clientes toca PII.
 
