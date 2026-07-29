@@ -40,6 +40,15 @@ func translateError(status int, ge *graphError, op string) error {
 		kind = domain.KindInvalidInput
 	}
 
+	// Presupuesto por debajo del mínimo que impone Meta. No tenemos confirmado el
+	// par código/subcódigo exacto (ver research.md, R5), así que se detecta por el
+	// texto del mensaje, la misma técnica que ya se usa para los breakdowns. Es
+	// frágil ante cambios de redacción de Meta: cuando se observe el subcódigo real
+	// en producción, reemplazar esto por el mapeo por código en kindFromCode.
+	if ge != nil && mentionsBudgetMinimum(ge.Message) {
+		return domain.NewError(domain.KindInvalidInput, op, domain.ErrBudgetBelowMinimum)
+	}
+
 	var cause error
 	if ge != nil {
 		cause = fmt.Errorf("graph error: http=%d code=%d subcode=%d type=%s fbtrace=%s msg=%q",
@@ -53,6 +62,15 @@ func translateError(status int, ge *graphError, op string) error {
 // mentionsBreakdown detecta errores de combinación de segmentación inválida.
 func mentionsBreakdown(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "breakdown")
+}
+
+// mentionsBudgetMinimum detecta el rechazo por presupuesto menor al mínimo.
+func mentionsBudgetMinimum(msg string) bool {
+	low := strings.ToLower(msg)
+	if !strings.Contains(low, "budget") {
+		return false
+	}
+	return strings.Contains(low, "minimum") || strings.Contains(low, "at least") || strings.Contains(low, "too low")
 }
 
 // kindFromCode mapea los códigos de error de Meta a la semántica del dominio.

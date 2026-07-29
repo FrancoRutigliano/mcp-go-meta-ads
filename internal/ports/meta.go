@@ -31,6 +31,13 @@ type MetaReader interface {
 	// GetAdInsights devuelve el rendimiento por anuncio (creativo) para el
 	// período pedido.
 	GetAdInsights(ctx context.Context, q domain.AdQuery) ([]domain.AdInsight, error)
+
+	// GetAdSets devuelve los conjuntos de anuncios de una campaña con su
+	// presupuesto, para resolver dónde se administra la plata.
+	GetAdSets(ctx context.Context, campaignID string) ([]domain.AdSet, error)
+
+	// GetAdSet devuelve un conjunto de anuncios puntual.
+	GetAdSet(ctx context.Context, id string) (domain.AdSet, error)
 }
 
 // MetaWriter expone las operaciones de ESCRITURA contra Meta. Está separado de
@@ -40,4 +47,12 @@ type MetaWriter interface {
 	// UpdateCampaignStatus pausa o activa una campaña (operación irreversible
 	// sobre el estado real).
 	UpdateCampaignStatus(ctx context.Context, campaignID string, status domain.CampaignStatus) error
+
+	// UpdateCampaignBudget fija el presupuesto de una campaña que administra su
+	// propio presupuesto. Mueve gasto real: sólo el confirm puede invocarlo.
+	UpdateCampaignBudget(ctx context.Context, campaignID string, budget domain.Budget) error
+
+	// UpdateAdSetBudget fija el presupuesto de un conjunto de anuncios. Mueve
+	// gasto real: sólo el confirm puede invocarlo.
+	UpdateAdSetBudget(ctx context.Context, adSetID string, budget domain.Budget) error
 }

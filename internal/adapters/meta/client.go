@@ -24,7 +24,8 @@ const (
 	defaultMaxRetries = 2
 	defaultBackoff    = 500 * time.Millisecond
 
-	campaignFields = "id,name,status,objective"
+	campaignFields = "id,name,status,objective,daily_budget,lifetime_budget"
+	adSetFields    = "id,name,status,campaign_id,daily_budget,lifetime_budget"
 	insightFields  = "campaign_id,campaign_name,spend,impressions,clicks,reach,ctr,cpc,date_start,date_stop," +
 		"frequency,inline_link_clicks,inline_link_click_ctr,purchase_roas,actions,action_values,cost_per_action_type"
 )
@@ -180,6 +181,105 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID string, st
 
 	_, err := c.post(ctx, campaignID, params, op)
 	return err
+}
+
+// GetAdSets implementa ports.MetaReader. Devuelve los conjuntos de anuncios de
+// una campaña con su presupuesto.
+func (c *Client) GetAdSets(ctx context.Context, campaignID string) ([]domain.AdSet, error) {
+	const op = "meta.GetAdSets"
+	if campaignID == "" {
+		return nil, domain.NewError(domain.KindInvalidInput, op, fmt.Errorf("falta el id de campaña"))
+	}
+
+	params := url.Values{}
+	params.Set("fields", adSetFields)
+
+	body, err := c.get(ctx, campaignID+"/adsets", params, op)
+	if err != nil {
+		return nil, err
+	}
+	sets, err := parseAdSets(body)
+	if err != nil {
+		return nil, domain.NewError(domain.KindUpstream, op, fmt.Errorf("parse: %w", err))
+	}
+	return sets, nil
+}
+
+// GetAdSet implementa ports.MetaReader. Devuelve un conjunto puntual.
+func (c *Client) GetAdSet(ctx context.Context, id string) (domain.AdSet, error) {
+	const op = "meta.GetAdSet"
+	if id == "" {
+		return domain.AdSet{}, domain.NewError(domain.KindInvalidInput, op, fmt.Errorf("falta el id del conjunto"))
+	}
+
+	params := url.Values{}
+	params.Set("fields", adSetFields)
+
+	body, err := c.get(ctx, id, params, op)
+	if err != nil {
+		return domain.AdSet{}, err
+	}
+	set, err := parseAdSet(body)
+	if err != nil {
+		return domain.AdSet{}, domain.NewError(domain.KindUpstream, op, fmt.Errorf("parse: %w", err))
+	}
+	return set, nil
+}
+
+// UpdateAdSetBudget implementa ports.MetaWriter. Fija el presupuesto de un
+// conjunto de anuncios (POST irreversible sobre gasto real).
+func (c *Client) UpdateAdSetBudget(ctx context.Context, adSetID string, budget domain.Budget) error {
+	const op = "meta.UpdateAdSetBudget"
+
+	params, err := budgetParams(budget, op)
+	if err != nil {
+		return err
+	}
+	if adSetID == "" {
+		return domain.NewError(domain.KindInvalidInput, op, fmt.Errorf("falta el id del conjunto"))
+	}
+
+	_, err = c.post(ctx, adSetID, params, op)
+	return err
+}
+
+// UpdateCampaignBudget implementa ports.MetaWriter. Fija el presupuesto de una
+// campaña (POST irreversible sobre gasto real).
+func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, budget domain.Budget) error {
+	const op = "meta.UpdateCampaignBudget"
+
+	params, err := budgetParams(budget, op)
+	if err != nil {
+		return err
+	}
+	if campaignID == "" {
+		return domain.NewError(domain.KindInvalidInput, op, fmt.Errorf("falta el id de campaña"))
+	}
+
+	_, err = c.post(ctx, campaignID, params, op)
+	return err
+}
+
+// budgetParams arma los parámetros del POST según el tipo de presupuesto. Manda
+// sólo el campo que corresponde: mezclar los dos cambiaría la configuración de
+// la entidad, no sólo el monto.
+func budgetParams(budget domain.Budget, op string) (url.Values, error) {
+	if !budget.Type.Valid() {
+		return nil, domain.NewError(domain.KindInvalidInput, op,
+			fmt.Errorf("tipo de presupuesto no soportado: %q", budget.Type))
+	}
+	if budget.Amount.Cents <= 0 {
+		return nil, domain.NewError(domain.KindInvalidInput, op,
+			fmt.Errorf("el presupuesto debe ser mayor a cero"))
+	}
+
+	field := "daily_budget"
+	if budget.Type == domain.BudgetLifetime {
+		field = "lifetime_budget"
+	}
+	params := url.Values{}
+	params.Set(field, budget.Amount.MinorUnits())
+	return params, nil
 }
 
 // GetAdInsights implementa ports.MetaReader. Devuelve el rendimiento por
