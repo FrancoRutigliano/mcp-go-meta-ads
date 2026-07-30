@@ -345,6 +345,11 @@ func segmentLabel(ri rawInsight, dim domain.BreakdownDimension) string {
 	case domain.DimensionPublisherPlatform:
 		return ri.PublisherPlatform
 	case domain.DimensionPlatformPosition:
+		// La posición viene siempre acompañada de la plataforma (Meta lo exige), y
+		// sola es ambigua: "reels" existe en Facebook y en Instagram.
+		if ri.PublisherPlatform != "" && ri.PlatformPosition != "" {
+			return ri.PublisherPlatform + " / " + ri.PlatformPosition
+		}
 		return ri.PlatformPosition
 	default:
 		return ""
