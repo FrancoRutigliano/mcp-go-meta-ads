@@ -6,12 +6,14 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mashats/meta-ads-manager/internal/domain"
@@ -23,6 +25,9 @@ const (
 	defaultInterval   = 200 * time.Millisecond
 	defaultMaxRetries = 2
 	defaultBackoff    = 500 * time.Millisecond
+	// defaultTimeout cubre las consultas de insights sobre rangos amplios (varios
+	// meses con breakdowns), que en la Graph API superan holgadamente los 30s.
+	defaultTimeout = 120 * time.Second
 
 	campaignFields = "id,name,status,objective,daily_budget,lifetime_budget"
 	adSetFields    = "id,name,status,campaign_id,daily_budget,lifetime_budget"
@@ -72,7 +77,7 @@ func WithRetry(maxRetries int, backoff time.Duration) Option {
 // guarda en memoria y nunca se expone en logs ni en errores.
 func New(token, accountID, apiVersion string, opts ...Option) *Client {
 	c := &Client{
-		http:       &http.Client{Timeout: 30 * time.Second},
+		http:       &http.Client{Timeout: defaultTimeout},
 		baseURL:    defaultBaseURL,
 		apiVersion: apiVersion,
 		accountID:  accountID,
@@ -323,6 +328,17 @@ func (c *Client) GetAdInsights(ctx context.Context, q domain.AdQuery) ([]domain.
 	return ads, nil
 }
 
+// breakdownParam traduce la dimensión del dominio al valor del parámetro
+// breakdowns de la Graph API. La posición del anuncio no se puede pedir sola:
+// Meta rechaza la combinación (action_type, platform_position) con un http 400 y
+// exige acompañarla de publisher_platform.
+func breakdownParam(dim domain.BreakdownDimension) string {
+	if dim == domain.DimensionPlatformPosition {
+		return string(domain.DimensionPublisherPlatform) + "," + string(domain.DimensionPlatformPosition)
+	}
+	return string(dim)
+}
+
 // GetAudienceBreakdown implementa ports.MetaReader. Segmenta el rendimiento por
 // la dimensión pedida usando el parámetro breakdowns de la Graph API.
 func (c *Client) GetAudienceBreakdown(ctx context.Context, q domain.AudienceQuery) (domain.AudienceBreakdown, error) {
@@ -351,7 +367,7 @@ func (c *Client) GetAudienceBreakdown(ctx context.Context, q domain.AudienceQuer
 
 	params := url.Values{}
 	params.Set("fields", insightFields)
-	params.Set("breakdowns", string(q.Dimension))
+	params.Set("breakdowns", breakdownParam(q.Dimension))
 	params.Set("time_range", string(timeRange))
 
 	body, err := c.get(ctx, node+"/insights", params, op)
@@ -408,26 +424,29 @@ func (c *Client) request(ctx context.Context, method, path string, params url.Va
 }
 
 func (c *Client) do(ctx context.Context, method, path string, params url.Values, op string) ([]byte, error) {
-	// El token va en la query pero nunca se loguea: no registramos URLs.
+	// El token viaja en el header Authorization, NUNCA en la query: cuando una
+	// request falla, Go devuelve un *url.Error que incluye la URL completa, y ese
+	// mensaje termina en los logs. Con el token en la query eso filtraba la
+	// credencial (Constitución, Principio I).
 	full := c.baseURL + "/" + c.apiVersion + "/" + path
 	q := url.Values{}
 	maps.Copy(q, params)
-	q.Set("access_token", c.token)
 
 	req, err := http.NewRequestWithContext(ctx, method, full+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, domain.NewError(domain.KindUpstream, op, err)
+		return nil, domain.NewError(domain.KindUpstream, op, c.sanitize(err))
 	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, domain.NewError(domain.KindUpstream, op, err)
+		return nil, domain.NewError(domain.KindUpstream, op, c.sanitize(err))
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, domain.NewError(domain.KindUpstream, op, err)
+		return nil, domain.NewError(domain.KindUpstream, op, c.sanitize(err))
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
@@ -441,4 +460,34 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values,
 func (c *Client) backoffFor(attempt int) time.Duration {
 	// Backoff exponencial: base * 2^attempt.
 	return c.backoff * (1 << attempt)
+}
+
+// sanitize limpia un error de transporte antes de que llegue a los logs. Los
+// *url.Error de net/http incluyen la URL completa; le sacamos la query, que es
+// donde podrían viajar credenciales o parámetros sensibles. El reemplazo final
+// del token es una red de seguridad ante cualquier otra vía de filtrado
+// (Constitución, Principio I: el token nunca sale en logs ni en errores).
+func (c *Client) sanitize(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		// Copiamos para no mutar el error original y conservamos el tipo, así
+		// Timeout() y Temporary() siguen funcionando aguas arriba.
+		safe := *uerr
+		if u, parseErr := url.Parse(uerr.URL); parseErr == nil {
+			u.RawQuery = ""
+			safe.URL = u.String()
+		} else {
+			safe.URL = "<url-redactada>"
+		}
+		err = &safe
+	}
+
+	if c.token != "" && strings.Contains(err.Error(), c.token) {
+		return errors.New(strings.ReplaceAll(err.Error(), c.token, "<token-redactado>"))
+	}
+	return err
 }

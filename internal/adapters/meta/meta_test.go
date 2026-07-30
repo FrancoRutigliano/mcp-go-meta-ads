@@ -179,6 +179,51 @@ func TestErrors_NeverLeakToken(t *testing.T) {
 	}
 }
 
+// TestErrors_NeverLeakTokenOnTransportFailure cubre la vía por la que el token
+// SÍ se filtraba a los logs: cuando la request falla a nivel de transporte
+// (timeout, DNS, conexión rechazada), net/http devuelve un *url.Error que
+// incluye la URL completa. Con el token en la query, ese mensaje lo exponía.
+func TestErrors_NeverLeakTokenOnTransportFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closedURL := srv.URL
+	srv.Close() // el puerto queda cerrado: toda request falla en transporte
+
+	client := New(testToken, "act_331498724", "v21.0",
+		WithBaseURL(closedURL),
+		WithLimiter(NewLimiter(0)),
+		WithRetry(0, time.Millisecond),
+	)
+
+	_, err := client.ListCampaigns(context.Background(), domain.CampaignQuery{})
+	if err == nil {
+		t.Fatal("se esperaba un error de transporte")
+	}
+	if strings.Contains(err.Error(), testToken) {
+		t.Fatalf("el error filtró el token: %v", err)
+	}
+}
+
+// TestRequest_SendsTokenInAuthorizationHeader fija la decisión: la credencial
+// viaja en el header, nunca en la query string.
+func TestRequest_SendsTokenInAuthorizationHeader(t *testing.T) {
+	var gotAuth, gotQuery string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"data":[]}`))
+	})
+
+	if _, err := client.ListCampaigns(context.Background(), domain.CampaignQuery{}); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if want := "Bearer " + testToken; gotAuth != want {
+		t.Errorf("header Authorization = %q, se esperaba %q", gotAuth, want)
+	}
+	if strings.Contains(gotQuery, "access_token") || strings.Contains(gotQuery, testToken) {
+		t.Errorf("la query contiene la credencial: %q", gotQuery)
+	}
+}
+
 func TestLimiter_EnforcesMinInterval(t *testing.T) {
 	l := NewLimiter(30 * time.Millisecond)
 	ctx := context.Background()
