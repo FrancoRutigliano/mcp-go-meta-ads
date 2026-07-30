@@ -1,6 +1,21 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// Errores del ciclo de vida de una propuesta. Se distinguen del resto para poder
+// darle a la usuaria un mensaje preciso: "se venció, pedila de nuevo" no es lo
+// mismo que "no encontré la campaña", y confundirlos la manda a buscar el
+// problema al lugar equivocado.
+var (
+	ErrProposalNotFound = errors.New("propuesta inexistente")
+	ErrProposalExpired  = errors.New("propuesta vencida")
+	// ErrCampaignAlreadyInState: se pidió pausar algo ya pausado (o activar algo
+	// ya activo). No es un error de datos: no hay nada que hacer.
+	ErrCampaignAlreadyInState = errors.New("la campaña ya está en ese estado")
+)
 
 // ProposalKind identifica el tipo de cambio propuesto.
 type ProposalKind string

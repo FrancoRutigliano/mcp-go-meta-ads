@@ -21,6 +21,9 @@ func messageForError(err error) string {
 	if msg, ok := budgetMessage(err); ok {
 		return msg
 	}
+	if msg, ok := proposalMessage(err); ok {
+		return msg
+	}
 
 	switch domain.KindOf(err) {
 	case domain.KindUnauthorized:
@@ -89,6 +92,24 @@ func budgetMessage(err error) (string, bool) {
 	return "", false
 }
 
+// proposalMessage resuelve los mensajes del ciclo de vida de una propuesta.
+// Sin esto, una propuesta vencida caía en el mensaje genérico de datos inválidos
+// ("revisá el período") y una inexistente en el de campaña no encontrada: los
+// dos mandan a la usuaria a buscar el problema donde no está.
+func proposalMessage(err error) (string, bool) {
+	switch {
+	case errors.Is(err, domain.ErrCampaignAlreadyInState):
+		return "Esa campaña ya está en ese estado, así que no hay nada que cambiar.", true
+	case errors.Is(err, domain.ErrProposalExpired):
+		return "Esa propuesta venció por seguridad: sólo vale unos minutos desde que la pedís. " +
+			"Pedila de nuevo y confirmala enseguida.", true
+	case errors.Is(err, domain.ErrProposalNotFound):
+		return "No encontré esa propuesta. Puede que ya la hayas confirmado (cada una sirve una sola vez), " +
+			"que haya vencido, o que el identificador esté mal. Pedí una propuesta nueva y confirmá esa.", true
+	}
+	return "", false
+}
+
 // levelMismatchMessage explica dónde vive realmente el presupuesto y, cuando
 // está en los conjuntos, los lista para que el usuario elija sin salir de la
 // conversación.
@@ -138,8 +159,13 @@ func formatBudgets(ov app.BudgetOverview) string {
 		return strings.TrimRight(b.String(), "\n")
 	}
 
-	fmt.Fprintf(&b, "Campaña \"%s\": la plata está repartida entre %d conjuntos de anuncios.\n",
-		ov.CampaignName, len(ov.AdSets))
+	if n := len(ov.AdSets); n == 1 {
+		fmt.Fprintf(&b, "Campaña \"%s\": el presupuesto lo maneja su único conjunto de anuncios.\n",
+			ov.CampaignName)
+	} else {
+		fmt.Fprintf(&b, "Campaña \"%s\": la plata está repartida entre %d conjuntos de anuncios.\n",
+			ov.CampaignName, n)
+	}
 	for _, set := range ov.AdSets {
 		fmt.Fprintf(&b, "• %s — %s — %s (id %s)\n",
 			set.Name, statusES(set.Status), adSetBudgetText(set), set.ID)

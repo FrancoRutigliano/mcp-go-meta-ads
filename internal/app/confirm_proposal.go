@@ -49,12 +49,12 @@ func (uc *ConfirmProposal) Execute(ctx context.Context, proposalID, confirmedBy 
 	p, ok := uc.store.Get(proposalID)
 	if !ok {
 		return domain.Proposal{}, domain.NewError(domain.KindNotFound, op,
-			fmt.Errorf("propuesta %q inexistente", proposalID))
+			fmt.Errorf("%w: %q", domain.ErrProposalNotFound, proposalID))
 	}
 	if p.Expired(uc.now()) {
 		uc.store.Delete(p.ID)
 		return domain.Proposal{}, domain.NewError(domain.KindInvalidInput, op,
-			fmt.Errorf("la propuesta %q venció", proposalID))
+			fmt.Errorf("%w: %q", domain.ErrProposalExpired, proposalID))
 	}
 
 	if confirmedBy == "" {
