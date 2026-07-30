@@ -53,7 +53,7 @@ func (uc *ProposeCampaignStatus) Execute(ctx context.Context, campaignID string,
 	target := action.TargetStatus()
 	if campaign.Status == target {
 		return domain.Proposal{}, domain.NewError(domain.KindInvalidInput, op,
-			fmt.Errorf("la campaña ya está en estado %s", target))
+			fmt.Errorf("%w (%s)", domain.ErrCampaignAlreadyInState, target))
 	}
 
 	now := uc.now()

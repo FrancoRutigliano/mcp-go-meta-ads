@@ -3,6 +3,7 @@ package meta
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,42 @@ func TestGetAudienceBreakdown_HappyPath(t *testing.T) {
 	}
 	if br.Segments[0].Metrics.ROAS == nil || *br.Segments[0].Metrics.ROAS != 4.0 {
 		t.Errorf("ROAS del segmento 0 mal mapeado")
+	}
+}
+
+// TestGetAudienceBreakdown_PlatformPositionPideAmbasDimensiones cubre un http 400
+// real de Meta: la posición del anuncio no se puede pedir sola, hay que
+// acompañarla de publisher_platform. La etiqueta combina las dos porque "reels"
+// sola es ambigua (existe en Facebook y en Instagram).
+func TestGetAudienceBreakdown_PlatformPositionPideAmbasDimensiones(t *testing.T) {
+	var gotQuery string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"data":[
+			{"publisher_platform":"instagram","platform_position":"instagram_reels","spend":"1000","impressions":"20000"}
+		]}`))
+	})
+
+	br, err := client.GetAudienceBreakdown(context.Background(), domain.AudienceQuery{
+		Dimension: domain.DimensionPlatformPosition,
+		Range: domain.DateRange{
+			Since: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			Until: time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	decoded, decErr := url.QueryUnescape(gotQuery)
+	if decErr != nil {
+		t.Fatalf("no pude decodificar la query: %v", decErr)
+	}
+	if !strings.Contains(decoded, "breakdowns=publisher_platform,platform_position") {
+		t.Errorf("la query debe pedir las dos dimensiones juntas: %q", decoded)
+	}
+	if len(br.Segments) != 1 || br.Segments[0].Label != "instagram / instagram_reels" {
+		t.Fatalf("etiqueta esperada 'instagram / instagram_reels', hubo: %+v", br.Segments)
 	}
 }
 

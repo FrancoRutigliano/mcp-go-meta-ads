@@ -14,9 +14,10 @@ const (
 // Thresholds reúne los umbrales de negocio (Principio VIII). Todos ajustables
 // por configuración; estos son los defaults.
 type Thresholds struct {
-	MinROAS      float64 // ROAS mínimo aceptable (>=)
-	LinkCTRMin   float64 // CTR de enlace mínimo, en %
-	LinkCTRMax   float64 // CTR de enlace máximo, en %
+	MinROAS float64 // ROAS mínimo aceptable (>=)
+	// LinkCTRMin es el CTR de enlace mínimo en %. No hay máximo: un CTR alto es
+	// una buena noticia y nunca se alerta por él.
+	LinkCTRMin   float64
 	MaxFrequency float64 // frecuencia máxima antes de alertar fatiga
 	AvgTicket    float64 // ticket promedio por compra (ARS), para comparar el CPA
 }
@@ -27,7 +28,6 @@ func DefaultThresholds() Thresholds {
 	return Thresholds{
 		MinROAS:      2.0,
 		LinkCTRMin:   0.8,
-		LinkCTRMax:   1.5,
 		MaxFrequency: 3.5,
 		AvgTicket:    80000,
 	}

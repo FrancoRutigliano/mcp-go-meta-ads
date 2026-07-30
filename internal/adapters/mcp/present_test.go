@@ -260,6 +260,49 @@ func TestMessageForError_BudgetSentinels(t *testing.T) {
 	}
 }
 
+// TestMessageForError_ProposalSentinels evita la regresión que mandaba a la
+// usuaria a revisar fechas cuando en realidad se le había vencido la propuesta,
+// o a revisar el id de la campaña cuando la propuesta no existía.
+func TestMessageForError_ProposalSentinels(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		contains   string
+		noContiene string
+	}{
+		{
+			name:       "propuesta vencida",
+			err:        domain.NewError(domain.KindInvalidInput, "op", domain.ErrProposalExpired),
+			contains:   "venció",
+			noContiene: "período",
+		},
+		{
+			name:       "propuesta inexistente",
+			err:        domain.NewError(domain.KindNotFound, "op", domain.ErrProposalNotFound),
+			contains:   "propuesta",
+			noContiene: "campaña o la cuenta",
+		},
+		{
+			name:       "campaña ya en ese estado",
+			err:        domain.NewError(domain.KindInvalidInput, "op", domain.ErrCampaignAlreadyInState),
+			contains:   "ya está en ese estado",
+			noContiene: "período",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := messageForError(tt.err)
+			if !strings.Contains(strings.ToLower(msg), strings.ToLower(tt.contains)) {
+				t.Errorf("mensaje = %q, esperaba que contuviera %q", msg, tt.contains)
+			}
+			if strings.Contains(strings.ToLower(msg), strings.ToLower(tt.noContiene)) {
+				t.Errorf("mensaje = %q, no debía mencionar %q", msg, tt.noContiene)
+			}
+		})
+	}
+}
+
 func TestMessageForError_FallsBackToKind(t *testing.T) {
 	// Un error sin sentinela conocida sigue cayendo al switch por Kind.
 	err := domain.NewError(domain.KindRateLimited, "op", nil)

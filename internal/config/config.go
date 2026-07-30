@@ -134,9 +134,6 @@ func loadBusinessRules(getenv func(string) string) (domain.Thresholds, domain.Su
 	if th.LinkCTRMin, err = floatEnv(getenv, "LINK_CTR_MIN", th.LinkCTRMin); err != nil {
 		return th, su, err
 	}
-	if th.LinkCTRMax, err = floatEnv(getenv, "LINK_CTR_MAX", th.LinkCTRMax); err != nil {
-		return th, su, err
-	}
 	if th.MaxFrequency, err = floatEnv(getenv, "FREQUENCY_MAX", th.MaxFrequency); err != nil {
 		return th, su, err
 	}
