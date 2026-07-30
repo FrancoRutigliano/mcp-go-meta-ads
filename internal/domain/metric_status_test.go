@@ -10,8 +10,8 @@ func TestDefaultThresholds(t *testing.T) {
 	if th.MinROAS != 2.0 {
 		t.Errorf("MinROAS = %v, want 2.0", th.MinROAS)
 	}
-	if th.LinkCTRMin != 0.8 || th.LinkCTRMax != 1.5 {
-		t.Errorf("LinkCTR range = [%v, %v], want [0.8, 1.5]", th.LinkCTRMin, th.LinkCTRMax)
+	if th.LinkCTRMin != 0.8 {
+		t.Errorf("LinkCTRMin = %v, want 0.8", th.LinkCTRMin)
 	}
 	if th.MaxFrequency != 3.5 {
 		t.Errorf("MaxFrequency = %v, want 3.5", th.MaxFrequency)

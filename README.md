@@ -54,7 +54,7 @@ sucesivos.
 | Variable | Default | Descripción |
 |----------|---------|-------------|
 | `ROAS_MIN` | `2` | ROAS mínimo aceptable. |
-| `LINK_CTR_MIN` / `LINK_CTR_MAX` | `0.8` / `1.5` | Rango saludable de CTR de enlace (%). |
+| `LINK_CTR_MIN` | `0.8` | CTR de enlace (%) por debajo del cual se alerta. No hay techo: un CTR alto es buena señal. |
 | `FREQUENCY_MAX` | `3.5` | Frecuencia a partir de la cual se alerta fatiga. |
 | `AVG_TICKET` | — | Ticket promedio de referencia para evaluar el CPA. |
 | `MIN_PURCHASES` / `MIN_IMPRESSIONS` / `MIN_LINK_CLICKS` / `MIN_DAYS` | `1` / `1000` / `50` / `7` | Mínimos de muestra para sostener una conclusión. |

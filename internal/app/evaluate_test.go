@@ -80,19 +80,35 @@ func TestEvaluate_FewDays_InsufficientForConversion(t *testing.T) {
 	}
 }
 
-func TestEvaluate_LinkCTR_Bounds(t *testing.T) {
+// TestEvaluate_LinkCTR_SoloAlertaCuandoEsBajo fija la regla de negocio: un CTR
+// de enlace ALTO es una buena noticia, no una alerta. Sólo se alerta por debajo
+// del mínimo. Antes se alertaba también por encima de un máximo, lo que marcaba
+// con ⚠️ a las mejores campañas y confundía a la usuaria.
+func TestEvaluate_LinkCTR_SoloAlertaCuandoEsBajo(t *testing.T) {
 	suff := domain.Metrics{Impressions: 50000, LinkClicks: 1000}
 
-	low := suff
-	low.LinkCTR = 0.5
-	if Evaluate(low, 30, baseThresholds(), baseSufficiency()).LinkCTR != domain.StatusWarn {
-		t.Errorf("CTR 0.5%% (fuera de rango) debe ser atención")
+	casos := []struct {
+		nombre string
+		ctr    float64
+		quiero domain.MetricStatus
+	}{
+		{"muy bajo", 0.3, domain.StatusWarn},
+		{"justo abajo del mínimo", 0.79, domain.StatusWarn},
+		{"en el mínimo", 0.8, domain.StatusOK},
+		{"normal", 1.0, domain.StatusOK},
+		{"alto", 2.48, domain.StatusOK},
+		{"excelente", 4.9, domain.StatusOK},
 	}
 
-	ok := suff
-	ok.LinkCTR = 1.0
-	if Evaluate(ok, 30, baseThresholds(), baseSufficiency()).LinkCTR != domain.StatusOK {
-		t.Errorf("CTR 1.0%% debe ser cumple")
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			m := suff
+			m.LinkCTR = c.ctr
+			got := Evaluate(m, 30, baseThresholds(), baseSufficiency()).LinkCTR
+			if got != c.quiero {
+				t.Errorf("CTR %.2f%% → %q, se esperaba %q", c.ctr, got, c.quiero)
+			}
+		})
 	}
 }
 

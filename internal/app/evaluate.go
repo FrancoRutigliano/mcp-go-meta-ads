@@ -64,14 +64,17 @@ func cpaStatus(m domain.Metrics, ticket float64, convSufficient bool) domain.Met
 	return domain.StatusBad
 }
 
+// linkCTRStatus evalúa el CTR de enlace. Sólo alerta cuando es BAJO: un CTR alto
+// significa que el anuncio engancha, y marcarlo como problema haría desconfiar de
+// las campañas que mejor funcionan. No hay techo.
 func linkCTRStatus(m domain.Metrics, th domain.Thresholds, rateSufficient bool) domain.MetricStatus {
 	if !rateSufficient {
 		return domain.StatusNoData
 	}
-	if m.LinkCTR >= th.LinkCTRMin && m.LinkCTR <= th.LinkCTRMax {
-		return domain.StatusOK
+	if m.LinkCTR < th.LinkCTRMin {
+		return domain.StatusWarn
 	}
-	return domain.StatusWarn
+	return domain.StatusOK
 }
 
 func frequencyStatus(m domain.Metrics, th domain.Thresholds, su domain.SufficiencyPolicy) domain.MetricStatus {
