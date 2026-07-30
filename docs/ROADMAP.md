@@ -23,7 +23,8 @@ campañas de Meta Ads hablando en español.
   ROAS 6,39x, ticket derivado ~$79.871, Principio IX honesto ante segmentos sin conversión.
 
 ### 🔜 Lectura (rápido, seguro, alto valor)
-- **003 — Fix umbral CTR de enlace**: alertar solo cuando es **bajo** (<0,8%); un CTR alto es bueno.
+- ✅ **003 — Fix umbral CTR de enlace**: alerta sólo cuando es **bajo** (<0,8%); no hay techo. Se
+  eliminó `LINK_CTR_MAX`. **Hecho — falta redeploy.**
 - ✅ **004 — Embudo de conversión** (`get_conversion_funnel`): impresiones → clic → vistas → carrito
   → inicio de pago → compras, resaltando dónde se cae + pista accionable. Pasos intermedios
   nullables (Principio IX). **Hecho — falta redeploy.**
@@ -55,9 +56,39 @@ campañas de Meta Ads hablando en español.
   pesos). Dos guardrails configurables: factor máximo de aumento (3x) y techo diario
   (`BUDGET_MAX_DAILY_ARS`). Detecta deriva entre propose y confirm. La propuesta muestra ROAS
   evaluado contra 2x y advierte cuando no hay datos suficientes, sin bloquear.
-  **Hecho — falta redeploy + validar contra la cuenta real en qué nivel está el presupuesto.**
+  **Hecho y validado en vivo (29/07/2026): el presupuesto de esta cuenta vive a nivel ad set**, no
+  campaña. Factor de moneda ARS confirmado (100). Escritura probada de punta a punta sobre un ad
+  set pausado (ida y vuelta, gasto $0). Falta redeploy.
 - **011 — Gestión de públicos (escritura)**: crear Custom/Lookalike/Saved audiences, editar
   targeting de un ad set. propose/confirm. ⚠️ Custom Audiences desde lista de clientes toca PII.
+
+---
+
+## Verificación en vivo — 29/07/2026
+
+Las 9 tools probadas contra la cuenta real (`act_331498724`). Todas funcionan. Se encontraron y
+arreglaron 4 defectos; el primero era crítico.
+
+| # | Defecto | Cómo se veía |
+|---|---------|--------------|
+| 1 | **Token de Meta filtrado a los logs** | Ante una falla de transporte, el `*url.Error` de net/http traía la URL completa con el token en la query, y se logueaba entero. En Railway = credencial en texto plano en el stream de logs. |
+| 2 | CTR alto marcado como alerta | 4,90% con ⚠️ (roadmap 003) |
+| 3 | `platform_position` fallaba siempre | Meta rechaza `(action_type, platform_position)`; hay que pedirla junto con `publisher_platform` |
+| 4 | Mensajes genéricos engañosos | Propuesta vencida → "revisá el período (fechas)" |
+
+Además: timeout del cliente HTTP 30s → 120s (los insights de rangos largos fallaban).
+
+Verificado del camino de escritura: `propose` no escribe; `confirm` sí; propuesta de **un solo uso**;
+**vencimiento a los 5 min**; **detección de deriva** (se modificó el presupuesto por detrás en Meta y
+el confirm se negó a aplicar); los dos guardrails frenan por separado; auditoría completa y sin el
+token. Cuenta restaurada a sus valores originales, 0 campañas activas.
+
+### Pendiente de esta verificación
+- **Rotar el token de Meta**: estuvo en logs locales por el defecto 1.
+- Ventana por defecto de 30 días: la cuenta no gasta desde junio, así que "¿cómo va mi publicidad?"
+  responde "sin datos". Es honesto (Principio IX) pero puede confundir. Evaluar cambiar el default.
+- `MIN_PURCHASES=1` es demasiado bajo: un anuncio con 1 compra sale con ROAS 30,21x y primero en el
+  ranking. Subirlo a 3-5 por env var (decisión de negocio, no requiere código).
 
 ---
 
@@ -66,5 +97,6 @@ campañas de Meta Ads hablando en español.
 - Meta **deprecó Audience Insights** (~2021): el "¿qué le gusta a mi cliente?" masivo es limitado;
   la búsqueda de intereses y el estimador de tamaño sí funcionan.
 - La campaña de Ventas rendía 6,39x y **está en $0** hace semanas: reactivarla es acción de
-  escritura (010).
+  escritura (010). Confirmado el 29/07: **toda la cuenta está pausada** y el último gasto fue en
+  junio. Mayo–junio 2026 rindió ROAS 6,96x (Frios) y 5,73x (Cálidos/Mixtos).
 - Todo lo de escritura mueve gasto real e irreversible → propose/confirm no es opcional.
