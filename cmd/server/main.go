@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	mcpadapter "github.com/mashats/meta-ads-manager/internal/adapters/mcp"
 	"github.com/mashats/meta-ads-manager/internal/adapters/memstore"
 	"github.com/mashats/meta-ads-manager/internal/adapters/meta"
+	"github.com/mashats/meta-ads-manager/internal/adapters/oauth"
 	"github.com/mashats/meta-ads-manager/internal/app"
 	"github.com/mashats/meta-ads-manager/internal/config"
 )
@@ -84,14 +86,36 @@ func main() {
 		server.WithEndpointPath(cfg.Endpoint),
 	)
 
-	// Auth del endpoint: si MCP_AUTH_TOKEN está configurado, se exige bearer.
-	// Si no, el endpoint queda abierto y lo advertimos de forma explícita.
-	if cfg.AuthToken == "" {
-		slog.Warn("MCP_AUTH_TOKEN no configurado: el endpoint queda ABIERTO (sin autenticación)")
-	} else {
-		slog.Info("autenticación del endpoint MCP habilitada (bearer)")
+	// Auth del endpoint. OAuth es el camino principal; el bearer estático
+	// sobrevive como puente durante la migración. Cada modo se anuncia de forma
+	// explícita: un endpoint abierto nunca debe quedar abierto en silencio.
+	ctx, cancelKeys := context.WithCancel(context.Background())
+	defer cancelKeys()
+
+	verifier, err := buildVerifier(ctx, cfg.OAuth)
+	if err != nil {
+		slog.Error("no se pudo inicializar OAuth; no se puede arrancar", "error", err)
+		os.Exit(1)
 	}
-	handler := mcpadapter.AuthMiddleware(cfg.AuthToken, streamable)
+	logAuthMode(cfg, verifier != nil)
+
+	authCfg := mcpadapter.AuthConfig{
+		ResourceMetadataURL: cfg.OAuth.MetadataURL(),
+		RequiredScopes:      cfg.OAuth.RequiredScopes,
+		StaticToken:         cfg.AuthToken,
+	}
+	// Una interfaz nil-typed no es una interfaz nil: sólo la asignamos cuando
+	// hay verificador de verdad, o el middleware creería que OAuth está activo.
+	if verifier != nil {
+		authCfg.Verifier = verifier
+	}
+
+	handler := mcpadapter.NewRouter(mcpadapter.RouterConfig{
+		Endpoint:   cfg.Endpoint,
+		MCPHandler: streamable,
+		Auth:       authCfg,
+		Metadata:   metadataConfig(cfg.OAuth),
+	})
 
 	addr := ":" + cfg.Port
 	slog.Info("servidor MCP escuchando", "addr", addr, "endpoint", cfg.Endpoint,
@@ -105,5 +129,72 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil {
 		slog.Error("el servidor terminó con error", "error", err)
 		os.Exit(1)
+	}
+}
+
+// buildVerifier arma el verificador de access tokens, o devuelve nil si OAuth
+// no está configurado.
+//
+// El descubrimiento y la primera carga del JWKS ocurren acá, en el arranque:
+// si el IdP no responde, preferimos no levantar antes que levantar un servidor
+// que va a rechazar todo sin poder explicar por qué.
+func buildVerifier(ctx context.Context, cfg config.OAuthConfig) (*oauth.Verifier, error) {
+	if !cfg.Enabled() {
+		return nil, nil
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	jwksURI, err := oauth.DiscoverJWKSURI(ctx, client, cfg.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("authorization server descubierto", "issuer", cfg.Issuer, "jwks_uri", jwksURI)
+
+	keys, err := oauth.NewCachedKeySet(ctx, jwksURI, client)
+	if err != nil {
+		return nil, err
+	}
+
+	return oauth.NewVerifier(oauth.Config{
+		Issuer:         cfg.Issuer,
+		Resource:       cfg.Resource,
+		RequiredScopes: cfg.RequiredScopes,
+	}, keys)
+}
+
+// logAuthMode deja asentado en el arranque con qué credenciales se protege el
+// endpoint. Es la única forma de notar desde afuera que quedó abierto.
+func logAuthMode(cfg *config.Config, oauthOn bool) {
+	switch {
+	case oauthOn && cfg.AuthToken != "":
+		slog.Warn("OAuth habilitado, pero MCP_AUTH_TOKEN sigue activo como credencial estática; "+
+			"quitá la variable cuando termine la migración",
+			"resource", cfg.OAuth.Resource, "issuer", cfg.OAuth.Issuer)
+	case oauthOn:
+		slog.Info("autenticación OAuth habilitada",
+			"resource", cfg.OAuth.Resource,
+			"issuer", cfg.OAuth.Issuer,
+			"metadata", cfg.OAuth.MetadataURL())
+	case cfg.AuthToken != "":
+		slog.Warn("sólo bearer estático (MCP_AUTH_TOKEN): el conector de Claude no puede autenticarse así; " +
+			"configurá OAUTH_ISSUER y PUBLIC_URL")
+	default:
+		slog.Warn("sin OAUTH_ISSUER ni MCP_AUTH_TOKEN: el endpoint queda ABIERTO (sin autenticación)")
+	}
+}
+
+// metadataConfig arma el documento de descubrimiento, o nil si OAuth no está
+// configurado.
+func metadataConfig(cfg config.OAuthConfig) *mcpadapter.MetadataConfig {
+	if !cfg.Enabled() {
+		return nil
+	}
+	return &mcpadapter.MetadataConfig{
+		Path:                 cfg.MetadataPath(),
+		Resource:             cfg.Resource,
+		AuthorizationServers: []string{cfg.Issuer},
+		ScopesSupported:      cfg.RequiredScopes,
+		ResourceName:         serverName,
 	}
 }

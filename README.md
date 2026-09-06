@@ -36,7 +36,27 @@ Variables de entorno (ver `.env.example`):
 | `META_AD_ACCOUNT_ID` | sí | — | Cuenta objetivo con prefijo `act_`. |
 | `META_API_VERSION` | no | `v21.0` | Versión de la Graph API. |
 | `PORT` | no | `8080` | Puerto del transporte Streamable HTTP. |
-| `MCP_AUTH_TOKEN` | no | — | Bearer que protege el endpoint MCP. Si está vacío, el endpoint queda abierto y se advierte en el log. |
+| `MCP_AUTH_TOKEN` | no | — | Bearer estático heredado. Sirve para acceso máquina a máquina, pero **el conector de Claude no puede autenticarse así**: usá OAuth. |
+
+### Autenticación OAuth
+
+El conector remoto de Claude sólo habla OAuth 2.1: no tiene dónde pegar un bearer estático.
+Para que la conexión funcione con un clic, el servidor actúa como *resource server* y delega
+login, consentimiento y emisión de tokens en un authorization server externo (WorkOS AuthKit).
+
+Con `OAUTH_ISSUER` configurado, el servidor descubre el JWKS del IdP al arrancar, publica su
+documento RFC 9728 en `/.well-known/oauth-protected-resource/mcp` y responde los 401 con la
+cabecera `WWW-Authenticate` que le permite al cliente encontrar todo eso solo.
+
+| Variable | Obligatoria | Default | Descripción |
+|----------|:-----------:|---------|-------------|
+| `OAUTH_ISSUER` | no | — | Issuer del authorization server (ej. `https://tu-tenant.authkit.app`). Vacío deshabilita OAuth. |
+| `PUBLIC_URL` | sí, si hay OAuth | — | URL pública del servidor (ej. `https://tu-app.up.railway.app`). De acá sale el resource identifier `PUBLIC_URL + /mcp`, que es el `aud` que deben traer los tokens. |
+| `OAUTH_REQUIRED_SCOPES` | no | — | Scopes exigidos, separados por espacios o comas. Vacío: alcanza con estar autenticado. |
+
+Ambas URLs deben usar `https`. Si `OAUTH_ISSUER` está presente y falta `PUBLIC_URL`, el arranque
+falla: sin resource identifier no se puede verificar que un token haya sido emitido para este
+servidor, y aceptar cualquier token válido del IdP abriría un *confused deputy*.
 
 ### Límites de seguridad de escritura
 
