@@ -36,7 +36,8 @@ type Config struct {
 	APIVersion  string
 	Port        string
 	Endpoint    string
-	AuthToken   string                   // bearer del endpoint MCP; vacío = abierto
+	AuthToken   string                   // bearer heredado del endpoint MCP; vacío = deshabilitado
+	OAuth       OAuthConfig              // validación de access tokens OAuth; vacía = deshabilitada
 	Thresholds  domain.Thresholds        // umbrales de negocio (Principio VIII)
 	Sufficiency domain.SufficiencyPolicy // mínimos de muestra (Principio IX)
 	Guardrails  domain.Guardrails        // límites de seguridad de escritura de presupuesto
@@ -79,6 +80,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		return nil, err
 	}
 
+	oauthCfg, err := loadOAuth(getenv, defaultEndpoint)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		AccessToken: token,
 		AccountID:   account,
@@ -86,6 +92,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		Port:        port,
 		Endpoint:    defaultEndpoint,
 		AuthToken:   strings.TrimSpace(getenv("MCP_AUTH_TOKEN")),
+		OAuth:       oauthCfg,
 		Thresholds:  thresholds,
 		Sufficiency: sufficiency,
 		Guardrails:  guardrails,
